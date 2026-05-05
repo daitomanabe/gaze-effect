@@ -138,10 +138,6 @@ private final class FrameRenderView: NSView {
         }
     }
 
-    override var isFlipped: Bool {
-        true
-    }
-
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
@@ -193,7 +189,7 @@ private final class FrameRenderView: NSView {
 
     private func drawStatus() {
         NSColor.black.withAlphaComponent(0.45).setFill()
-        NSBezierPath(rect: NSRect(x: 0, y: 0, width: bounds.width, height: 54)).fill()
+        NSBezierPath(rect: NSRect(x: 0, y: bounds.height - 54, width: bounds.width, height: 54)).fill()
 
         let text = "\(mode.label) | \(state.statusText)"
         let attributes: [NSAttributedString.Key: Any] = [
@@ -202,7 +198,7 @@ private final class FrameRenderView: NSView {
         ]
 
         text.draw(
-            in: NSRect(x: 18, y: 16, width: max(0, bounds.width - 222), height: 24),
+            in: NSRect(x: 18, y: bounds.height - 38, width: max(0, bounds.width - 222), height: 24),
             withAttributes: attributes
         )
     }
@@ -323,7 +319,7 @@ private final class FrameRenderView: NSView {
     private func viewPoint(_ normalized: CGPoint, in imageRect: NSRect) -> CGPoint {
         CGPoint(
             x: imageRect.minX + normalized.x * imageRect.width,
-            y: imageRect.minY + normalized.y * imageRect.height
+            y: imageRect.maxY - normalized.y * imageRect.height
         )
     }
 
@@ -498,7 +494,7 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
                 return
             }
 
-            self.handleVisionResults(request.results as? [VNFaceObservation] ?? [])
+            self.handleVisionResults(request.results as? [VNFaceObservation] ?? [], pixelBuffer: pixelBuffer)
         }
 
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
@@ -522,7 +518,7 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
         }
     }
 
-    private func handleVisionResults(_ observations: [VNFaceObservation]) {
+    private func handleVisionResults(_ observations: [VNFaceObservation], pixelBuffer: CVPixelBuffer) {
         guard let face = observations.max(by: { $0.boundingBox.area < $1.boundingBox.area }),
               let landmarks = face.landmarks,
               let leftEye = landmarks.leftEye,
@@ -534,8 +530,10 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
 
         let leftContour = normalizedPoints(leftEye, in: face)
         let rightContour = normalizedPoints(rightEye, in: face)
-        let leftPupil = normalizedPupil(landmarks.leftPupil, in: face)
-        let rightPupil = normalizedPupil(landmarks.rightPupil, in: face)
+        let leftPupil = detectDarkPupil(contour: leftContour, in: pixelBuffer)
+            ?? normalizedPupil(landmarks.leftPupil, in: face)
+        let rightPupil = detectDarkPupil(contour: rightContour, in: pixelBuffer)
+            ?? normalizedPupil(landmarks.rightPupil, in: face)
 
         let result = estimator.estimate(
             from: FaceLandmarks(
@@ -595,6 +593,121 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
     private func topLeftRect(_ rect: CGRect) -> CGRect {
         CGRect(x: rect.minX, y: 1.0 - rect.maxY, width: rect.width, height: rect.height)
     }
+
+    private func detectDarkPupil(contour: [CGPoint], in pixelBuffer: CVPixelBuffer) -> CGPoint? {
+        guard contour.count >= 4 else {
+            return nil
+        }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer {
+            CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
+        }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            return nil
+        }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let buffer = baseAddress.assumingMemoryBound(to: UInt8.self)
+        let bounds = normalizedBounds(contour)
+        let centerX = bounds.midX * CGFloat(width)
+        let centerY = bounds.midY * CGFloat(height)
+        let radiusX = max(6, bounds.width * CGFloat(width) * 0.52)
+        let radiusY = max(4, bounds.height * CGFloat(height) * 0.48)
+        let minX = max(0, Int(floor(centerX - radiusX)))
+        let maxX = min(width - 1, Int(ceil(centerX + radiusX)))
+        let minY = max(0, Int(floor(centerY - radiusY)))
+        let maxY = min(height - 1, Int(ceil(centerY + radiusY)))
+
+        guard minX <= maxX, minY <= maxY else {
+            return nil
+        }
+
+        var minLuma = CGFloat.greatestFiniteMagnitude
+        var totalLuma: CGFloat = 0
+        var count: CGFloat = 0
+
+        for y in minY...maxY {
+            for x in minX...maxX {
+                let nx = (CGFloat(x) - centerX) / radiusX
+                let ny = (CGFloat(y) - centerY) / radiusY
+                guard nx * nx + ny * ny <= 1 else {
+                    continue
+                }
+
+                let luma = bgraLuminance(buffer: buffer, bytesPerRow: bytesPerRow, x: x, y: y)
+                minLuma = min(minLuma, luma)
+                totalLuma += luma
+                count += 1
+            }
+        }
+
+        guard count > 0, minLuma.isFinite else {
+            return nil
+        }
+
+        let meanLuma = totalLuma / count
+        let threshold = minLuma + (meanLuma - minLuma) * 0.70
+        var weightedX: CGFloat = 0
+        var weightedY: CGFloat = 0
+        var totalWeight: CGFloat = 0
+
+        for y in minY...maxY {
+            for x in minX...maxX {
+                let nx = (CGFloat(x) - centerX) / radiusX
+                let ny = (CGFloat(y) - centerY) / radiusY
+                guard nx * nx + ny * ny <= 1 else {
+                    continue
+                }
+
+                let luma = bgraLuminance(buffer: buffer, bytesPerRow: bytesPerRow, x: x, y: y)
+                let weight = max(0, threshold - luma)
+                weightedX += CGFloat(x) * weight
+                weightedY += CGFloat(y) * weight
+                totalWeight += weight
+            }
+        }
+
+        guard totalWeight > 0 else {
+            return nil
+        }
+
+        return CGPoint(
+            x: (weightedX / totalWeight) / CGFloat(width),
+            y: (weightedY / totalWeight) / CGFloat(height)
+        )
+    }
+
+    private func bgraLuminance(buffer: UnsafePointer<UInt8>, bytesPerRow: Int, x: Int, y: Int) -> CGFloat {
+        let index = y * bytesPerRow + x * 4
+        let b = CGFloat(buffer[index])
+        let g = CGFloat(buffer[index + 1])
+        let r = CGFloat(buffer[index + 2])
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+
+    private func normalizedBounds(_ points: [CGPoint]) -> CGRect {
+        guard let first = points.first else {
+            return .zero
+        }
+
+        var minX = first.x
+        var minY = first.y
+        var maxX = first.x
+        var maxY = first.y
+
+        for point in points.dropFirst() {
+            minX = Swift.min(minX, point.x)
+            minY = Swift.min(minY, point.y)
+            maxX = Swift.max(maxX, point.x)
+            maxY = Swift.max(maxY, point.y)
+        }
+
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
 }
 
 private enum CameraError: LocalizedError {
@@ -622,7 +735,7 @@ private extension CGRect {
     func viewRect(in imageRect: NSRect) -> NSRect {
         NSRect(
             x: imageRect.minX + minX * imageRect.width,
-            y: imageRect.minY + minY * imageRect.height,
+            y: imageRect.maxY - maxY * imageRect.height,
             width: width * imageRect.width,
             height: height * imageRect.height
         )

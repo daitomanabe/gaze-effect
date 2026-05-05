@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="GazeEffectPreview"
 PRODUCT_NAME="GazeEffectPreviewApp"
 APP_DIR="${ROOT_DIR}/build/${APP_NAME}.app"
+SWIFTPM_BUILD_PATH="${SWIFTPM_BUILD_PATH:-${TMPDIR:-/tmp}/gaze-effect-swiftpm-app}"
 CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
@@ -14,12 +15,14 @@ APP_SIGN_IDENTITY="${APP_SIGN_IDENTITY:-Apple Development: DAITO MANABE (8W8KF3U
 cd "${ROOT_DIR}"
 
 set +e
-swift build -c release --product "${PRODUCT_NAME}"
+swift build -c release --product "${PRODUCT_NAME}" --build-path "${SWIFTPM_BUILD_PATH}"
 BUILD_STATUS=$?
 set -e
 
+BINARY_PATH="${SWIFTPM_BUILD_PATH}/release/${PRODUCT_NAME}"
+
 if [ "${BUILD_STATUS}" -ne 0 ]; then
-  if [ ! -x "${ROOT_DIR}/.build/release/${PRODUCT_NAME}" ]; then
+  if [ ! -x "${BINARY_PATH}" ]; then
     echo "swift build failed and no release binary was produced." >&2
     exit "${BUILD_STATUS}"
   fi
@@ -30,7 +33,7 @@ fi
 rm -rf "${APP_DIR}"
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
-cp -X "${ROOT_DIR}/.build/release/${PRODUCT_NAME}" "${MACOS_DIR}/${PRODUCT_NAME}"
+cp -X "${BINARY_PATH}" "${MACOS_DIR}/${PRODUCT_NAME}"
 cp -X "${INFO_PLIST}" "${CONTENTS_DIR}/Info.plist"
 chmod 755 "${MACOS_DIR}/${PRODUCT_NAME}"
 
