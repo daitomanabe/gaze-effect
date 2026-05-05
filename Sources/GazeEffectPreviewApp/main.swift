@@ -370,6 +370,8 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
     private var estimator = EyeContactEstimator()
     private var lastAnalysisTime: CFTimeInterval = 0
     private var isAnalyzing = false
+    private let analysisFrameInterval: CFTimeInterval = 1.0 / 30.0
+    private let analysisMaxDimension: CGFloat = 640
 
     init(containerView: PreviewContainerView) {
         self.containerView = containerView
@@ -474,7 +476,7 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
         publishFrame(pixelBuffer)
 
         let now = CACurrentMediaTime()
-        guard now - lastAnalysisTime >= 1.0 / 12.0, !isAnalyzing else {
+        guard now - lastAnalysisTime >= analysisFrameInterval, !isAnalyzing else {
             return
         }
         lastAnalysisTime = now
@@ -497,7 +499,13 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
             self.handleVisionResults(request.results as? [VNFaceObservation] ?? [], pixelBuffer: pixelBuffer)
         }
 
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
+        guard let analysisImage = makeAnalysisImage(from: pixelBuffer) else {
+            isAnalyzing = false
+            updateStatus("Vision error: could not prepare analysis frame")
+            return
+        }
+
+        let handler = VNImageRequestHandler(cgImage: analysisImage, orientation: .up, options: [:])
 
         do {
             try handler.perform([request])
@@ -516,6 +524,26 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
         DispatchQueue.main.async { [weak self] in
             self?.containerView?.renderView.cameraImage = cgImage
         }
+    }
+
+    private func makeAnalysisImage(from pixelBuffer: CVPixelBuffer) -> CGImage? {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let extent = ciImage.extent
+        let longestEdge = max(extent.width, extent.height)
+        let scale = longestEdge > analysisMaxDimension ? analysisMaxDimension / longestEdge : 1
+
+        guard scale < 1 else {
+            return ciContext.createCGImage(ciImage, from: extent)
+        }
+
+        let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let scaledExtent = CGRect(
+            x: 0,
+            y: 0,
+            width: floor(extent.width * scale),
+            height: floor(extent.height * scale)
+        )
+        return ciContext.createCGImage(scaledImage, from: scaledExtent)
     }
 
     private func handleVisionResults(_ observations: [VNFaceObservation], pixelBuffer: CVPixelBuffer) {
