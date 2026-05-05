@@ -70,6 +70,22 @@ The core package intentionally keeps Vision, AVFoundation, Metal, and Core Media
 swift run GazeEffectCoreCheck
 ```
 
+## Build Local App
+
+For a local machine build without an installer:
+
+```bash
+./scripts/build-app.sh
+open build/GazeEffectPreview.app
+```
+
+The preview app opens the camera, runs Vision face landmark analysis, and overlays the estimated eye-contact correction vectors. It is a local preview app, not a CMIO virtual camera device.
+
+Preview modes:
+
+- `Effect`: shifts a small elliptical eye region by the estimated correction vector, moving the dark pupil/iris area toward camera-facing eye contact.
+- `Debug`: shows face bounds, eye contours, source pupils, target pupils, and correction vectors without modifying the video image.
+
 ## Build Installer
 
 ```bash
