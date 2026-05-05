@@ -176,4 +176,4 @@ For a stronger future version, a 3D eye model or learned gaze-redirection model 
 
 ## License
 
-Copyright (c) 2026 Daito Manabe. All rights reserved.
+MIT License.
