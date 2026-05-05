@@ -19,6 +19,10 @@ let package = Package(
         .executable(
             name: "GazeEffectPreviewApp",
             targets: ["GazeEffectPreviewApp"]
+        ),
+        .executable(
+            name: "GazeEffectImageTool",
+            targets: ["GazeEffectImageTool"]
         )
     ],
     targets: [
@@ -31,6 +35,13 @@ let package = Package(
         ),
         .executableTarget(
             name: "GazeEffectPreviewApp",
+            dependencies: ["GazeEffectCore"],
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
+        ),
+        .executableTarget(
+            name: "GazeEffectImageTool",
             dependencies: ["GazeEffectCore"],
             swiftSettings: [
                 .swiftLanguageMode(.v5)

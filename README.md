@@ -1,5 +1,7 @@
 # Gaze Effect
 
+![Gaze Effect thumbnail](Assets/thumbnail/gaze-effect-thumbnail.jpg)
+
 Gaze Effect は、カメラ映像の人物が常にカメラ目線に見えるようにするための macOS 向けカメラエフェクトです。目の輪郭と瞳孔位置を解析し、視線だけを自然にカメラ方向へ寄せることで、オンライン会議、配信、録画の映像に「見られている」感覚を加えます。
 
 The concept is simple: make every captured face look toward the camera, continuously and in real time.
@@ -11,6 +13,40 @@ The concept is simple: make every captured face look toward the camera, continuo
 補正は顔全体を作り替えるのではなく、左右の目元だけに限定します。Vision の顔ランドマークから目の輪郭と瞳孔位置を取得し、瞳孔を目の中心方向へ小さく移動させます。これにより、表情、まばたき、頭の向きは保ったまま、視線だけをカメラ方向へ近づけます。
 
 最終的には、Core Media I/O Camera Extension として macOS に仮想カメラを登録し、FaceTime、Zoom、OBS、AVFoundation クライアントなどから通常のカメラとして選択できるようにします。
+
+## Examples
+
+The examples below use public domain source images and apply the same eye-contact correction concept to still images.
+
+### Cecil Beaton / Tyneside Shipyards
+
+![Cecil Beaton Tyneside comparison](Assets/examples/comparison/beaton-tyneside-comparison.jpg)
+
+Source: [Wikimedia Commons, public domain](https://commons.wikimedia.org/wiki/File:Cecil_Beaton_Photographs-_Tyneside_Shipyards,_1943_DB143.jpg)
+
+### Cornelius Vanderbilt
+
+![Cornelius Vanderbilt comparison](Assets/examples/comparison/vanderbilt-comparison.jpg)
+
+Source: [Wikimedia Commons, public domain](https://commons.wikimedia.org/wiki/File:Cornelius_Vanderbilt_Daguerrotype.jpg)
+
+### Abraham Lincoln
+
+![Abraham Lincoln comparison](Assets/examples/comparison/loc-lincoln-left-comparison.jpg)
+
+Source: [Library of Congress](https://www.loc.gov/pictures/item/90713137/)
+
+### Gifford Pinchot
+
+![Gifford Pinchot comparison](Assets/examples/comparison/loc-pinchot-comparison.jpg)
+
+Source: [Library of Congress](https://www.loc.gov/pictures/item/90713134/)
+
+### Beverly Page Yates
+
+![Beverly Page Yates comparison](Assets/examples/comparison/loc-yates-comparison.jpg)
+
+Source: [Library of Congress](https://www.loc.gov/pictures/item/2004664360/)
 
 ## Status
 
@@ -60,6 +96,7 @@ Apple's Camera Extension workflow is documented in [Creating a camera extension 
 
 - `Sources/GazeEffectCore/GazeEffectCore.swift`: frame-independent eye-contact estimation logic.
 - `Sources/GazeEffectCoreCheck/main.swift`: geometry and safety checks that run without Xcode.
+- `Sources/GazeEffectImageTool/main.swift`: still-image correction tool used to generate the README examples.
 - `scripts/build-installer.sh`: builds an unsigned developer-preview macOS installer package.
 
 The core package intentionally keeps Vision, AVFoundation, Metal, and Core Media I/O out of the library target. This keeps the correction logic testable and allows the same estimator to run inside a Camera Extension, preview app, or offline renderer.

@@ -5,6 +5,8 @@ DerivedData/
 build/
 dist/
 artifacts/
+Assets/examples/source/
+Assets/examples/metadata/
 
 *.pkg
 *.dSYM/
