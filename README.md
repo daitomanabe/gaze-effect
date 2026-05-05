@@ -95,6 +95,44 @@ Installed files:
 - `/usr/local/share/gaze-effect/README.md`
 - `/usr/local/share/gaze-effect/LICENSE`
 
+## Gatekeeper
+
+The developer-preview installer is unsigned unless it is built with a Developer ID Installer certificate. macOS may show a warning such as:
+
+```text
+Apple could not verify "GazeEffect-DeveloperPreview-0.1.0.pkg" is free of malware.
+```
+
+For local development only, remove the quarantine attribute and install from Terminal:
+
+```bash
+xattr -d com.apple.quarantine dist/GazeEffect-DeveloperPreview-0.1.0.pkg
+sudo installer -pkg dist/GazeEffect-DeveloperPreview-0.1.0.pkg -target /
+```
+
+For public distribution, build a signed and notarized package:
+
+```bash
+DEVELOPER_ID_INSTALLER="Developer ID Installer: Your Name (TEAMID)" \
+NOTARY_PROFILE="gaze-effect-notary" \
+./scripts/build-installer.sh
+```
+
+Create the notary profile once:
+
+```bash
+xcrun notarytool store-credentials gaze-effect-notary \
+  --apple-id "you@example.com" \
+  --team-id "TEAMID"
+```
+
+The public distribution package should pass:
+
+```bash
+pkgutil --check-signature dist/GazeEffect-DeveloperPreview-0.1.0.pkg
+spctl --assess --type install -vv dist/GazeEffect-DeveloperPreview-0.1.0.pkg
+```
+
 ## Camera Extension Roadmap
 
 1. Create a macOS app target, for example `GazeEffectHost`.

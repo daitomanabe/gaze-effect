@@ -9,6 +9,9 @@ BUILD_DIR="${ROOT_DIR}/build/installer"
 PKG_ROOT="${BUILD_DIR}/pkgroot"
 OUTPUT_DIR="${ROOT_DIR}/dist"
 OUTPUT_PKG="${OUTPUT_DIR}/${PRODUCT_NAME}-${VERSION}.pkg"
+UNSIGNED_PKG="${BUILD_DIR}/${PRODUCT_NAME}-${VERSION}.unsigned.pkg"
+DEVELOPER_ID_INSTALLER="${DEVELOPER_ID_INSTALLER:-}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-}"
 
 export COPYFILE_DISABLE=1
 
@@ -48,6 +51,43 @@ pkgbuild \
   --identifier "${IDENTIFIER}" \
   --version "${VERSION}" \
   --install-location "/" \
-  "${OUTPUT_PKG}"
+  "${UNSIGNED_PKG}"
+
+if [ -n "${DEVELOPER_ID_INSTALLER}" ]; then
+  productsign \
+    --sign "${DEVELOPER_ID_INSTALLER}" \
+    "${UNSIGNED_PKG}" \
+    "${OUTPUT_PKG}"
+else
+  cp -X "${UNSIGNED_PKG}" "${OUTPUT_PKG}"
+fi
+
+if [ -n "${NOTARY_PROFILE}" ]; then
+  if [ -z "${DEVELOPER_ID_INSTALLER}" ]; then
+    echo "NOTARY_PROFILE requires DEVELOPER_ID_INSTALLER." >&2
+    exit 1
+  fi
+
+  xcrun notarytool submit "${OUTPUT_PKG}" \
+    --keychain-profile "${NOTARY_PROFILE}" \
+    --wait
+  xcrun stapler staple "${OUTPUT_PKG}"
+fi
+
+set +e
+pkgutil --check-signature "${OUTPUT_PKG}"
+SIGNATURE_STATUS=$?
+spctl --assess --type install -vv "${OUTPUT_PKG}"
+ASSESS_STATUS=$?
+set -e
+
+if [ -n "${NOTARY_PROFILE}" ] && [ "${ASSESS_STATUS}" -ne 0 ]; then
+  echo "Gatekeeper assessment failed after notarization." >&2
+  exit "${ASSESS_STATUS}"
+fi
+
+if [ "${SIGNATURE_STATUS}" -ne 0 ]; then
+  echo "Built unsigned developer-preview package." >&2
+fi
 
 echo "${OUTPUT_PKG}"
