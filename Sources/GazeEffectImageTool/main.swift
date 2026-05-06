@@ -9,10 +9,13 @@ import Vision
 private struct Options {
     var input: String?
     var output: String?
+    var inputDir: String?
+    var outputDir: String?
     var before: String?
     var metadata: String?
+    var metadataDir: String?
     var maxWidth: Int = 1000
-    var strength: CGFloat = 2.0
+    var strength: CGFloat = 1.4
     var verbose = false
 }
 
@@ -34,6 +37,7 @@ private enum ToolError: LocalizedError {
     case cannotCreateImage
     case noFace
     case noLandmarks
+    case cannotListDirectory(String)
     case cannotWrite(String)
 
     var errorDescription: String? {
@@ -48,6 +52,8 @@ private enum ToolError: LocalizedError {
             return "No face detected"
         case .noLandmarks:
             return "No usable eye landmarks detected"
+        case .cannotListDirectory(let path):
+            return "Could not list directory: \(path)"
         case .cannotWrite(let path):
             return "Could not write image: \(path)"
         }
@@ -65,10 +71,16 @@ private func parseOptions() throws -> Options {
             options.input = args.removeFirst()
         case "--output":
             options.output = args.removeFirst()
+        case "--input-dir":
+            options.inputDir = args.removeFirst()
+        case "--output-dir":
+            options.outputDir = args.removeFirst()
         case "--before":
             options.before = args.removeFirst()
         case "--metadata":
             options.metadata = args.removeFirst()
+        case "--metadata-dir":
+            options.metadataDir = args.removeFirst()
         case "--max-width":
             options.maxWidth = Int(args.removeFirst()) ?? options.maxWidth
         case "--strength":
@@ -83,11 +95,17 @@ private func parseOptions() throws -> Options {
         }
     }
 
-    guard options.input != nil else {
-        throw ToolError.missingArgument("--input")
-    }
-    guard options.output != nil else {
-        throw ToolError.missingArgument("--output")
+    if options.inputDir != nil {
+        guard options.outputDir != nil else {
+            throw ToolError.missingArgument("--output-dir")
+        }
+    } else {
+        guard options.input != nil else {
+            throw ToolError.missingArgument("--input")
+        }
+        guard options.output != nil else {
+            throw ToolError.missingArgument("--output")
+        }
     }
 
     return options
@@ -96,7 +114,8 @@ private func parseOptions() throws -> Options {
 private func printUsage() {
     print("""
     Usage:
-      GazeEffectImageTool --input source.jpg --output after.jpg [--before before.jpg] [--metadata data.json] [--max-width 1000] [--strength 2.0] [--verbose]
+      GazeEffectImageTool --input source.jpg --output after.jpg [--before before.jpg] [--metadata data.json] [--max-width 1000] [--strength 1.4] [--verbose]
+      GazeEffectImageTool --input-dir frames --output-dir corrected [--metadata-dir metadata] [--max-width 1000] [--strength 1.4] [--verbose]
     """)
 }
 
@@ -205,7 +224,12 @@ private func writeJPEG(_ image: CGImage, to path: String, quality: CGFloat = 0.9
     }
 }
 
-private func analyze(image: CGImage, rgba: RGBAImage, verbose: Bool) throws -> (EyeRenderData, EyeRenderData, CGRect) {
+private func analyze(
+    image: CGImage,
+    rgba: RGBAImage,
+    estimator: inout EyeContactEstimator,
+    verbose: Bool
+) throws -> (EyeRenderData, EyeRenderData, CGRect) {
     var requestError: Error?
     var observations: [VNFaceObservation] = []
 
@@ -231,21 +255,14 @@ private func analyze(image: CGImage, rgba: RGBAImage, verbose: Bool) throws -> (
 
     let leftContour = normalizedPoints(leftEye, in: face)
     let rightContour = normalizedPoints(rightEye, in: face)
-    let leftPupil = detectDarkPupil(contour: leftContour, in: rgba)
-        ?? normalizedPupil(landmarks.leftPupil, in: face)
+    let visionLeftPupil = normalizedPupil(landmarks.leftPupil, in: face)
+    let visionRightPupil = normalizedPupil(landmarks.rightPupil, in: face)
+    let leftPupil = detectDarkPupil(contour: leftContour, visionPupil: visionLeftPupil, in: rgba)
+        ?? visionLeftPupil
         ?? centroid(leftContour)
-    let rightPupil = detectDarkPupil(contour: rightContour, in: rgba)
-        ?? normalizedPupil(landmarks.rightPupil, in: face)
+    let rightPupil = detectDarkPupil(contour: rightContour, visionPupil: visionRightPupil, in: rgba)
+        ?? visionRightPupil
         ?? centroid(rightContour)
-
-    var estimator = EyeContactEstimator(
-        configuration: EyeContactConfiguration(
-            blinkAspectRatioThreshold: 0.04,
-            maxShiftAsEyeWidth: 0.24,
-            smoothingAlpha: 1.0,
-            minConfidence: 0.05
-        )
-    )
 
     let result = estimator.estimate(
         from: FaceLandmarks(
@@ -275,11 +292,137 @@ private func analyze(image: CGImage, rgba: RGBAImage, verbose: Bool) throws -> (
 
 private func renderEffect(source: RGBAImage, left: EyeRenderData, right: EyeRenderData, strength: CGFloat) -> RGBAImage {
     var output = source
-    applyEyeShift(eye: left, source: source, output: &output, strength: strength)
-    applyEyeShift(eye: right, source: source, output: &output, strength: strength)
-    reinforcePupil(eye: left, source: source, output: &output, strength: strength)
-    reinforcePupil(eye: right, source: source, output: &output, strength: strength)
+    applyIrisPatch(eye: left, source: source, output: &output, strength: strength)
+    applyIrisPatch(eye: right, source: source, output: &output, strength: strength)
     return output
+}
+
+private func makeEstimator(smoothingAlpha: CGFloat) -> EyeContactEstimator {
+    EyeContactEstimator(
+        configuration: EyeContactConfiguration(
+            blinkAspectRatioThreshold: 0.04,
+            maxShiftAsEyeWidth: 0.28,
+            maxVerticalShiftAsEyeHeight: 0.60,
+            targetVerticalBiasAsEyeHeight: 0.35,
+            smoothingAlpha: smoothingAlpha,
+            pupilSmoothingAlpha: smoothingAlpha,
+            minConfidence: 0.05
+        )
+    )
+}
+
+private func applyIrisPatch(eye: EyeRenderData, source: RGBAImage, output: inout RGBAImage, strength: CGFloat) {
+    let width = source.width
+    let height = source.height
+    let eyeBounds = normalizedBounds(eye.contour)
+    let eyeWidth = max(1, eyeBounds.width * CGFloat(width))
+    let eyeHeight = max(1, eyeBounds.height * CGFloat(height))
+
+    let sourcePoint = pixelPoint(eye.sourcePupil, width: width, height: height)
+    let targetPoint = pixelPoint(eye.targetPupil, width: width, height: height)
+    var dx = (targetPoint.x - sourcePoint.x) * strength
+    var dy = (targetPoint.y - sourcePoint.y) * strength
+    dx = min(max(dx, -eyeWidth * 0.34), eyeWidth * 0.34)
+    dy = min(max(dy, -eyeHeight * 0.72), eyeHeight * 0.72)
+
+    guard hypot(dx, dy) >= 0.35 else {
+        return
+    }
+
+    let destination = CGPoint(x: sourcePoint.x + dx, y: sourcePoint.y + dy)
+    let radiusX = max(3.2, eyeWidth * 0.23)
+    let radiusY = max(2.4, eyeHeight * 0.50)
+    attenuateOriginalPupil(
+        source: source,
+        output: &output,
+        point: sourcePoint,
+        delta: CGVector(dx: dx, dy: dy),
+        radiusX: radiusX * 1.18,
+        radiusY: radiusY * 1.08
+    )
+
+    let minX = max(0, Int(floor(destination.x - radiusX)))
+    let maxX = min(width - 1, Int(ceil(destination.x + radiusX)))
+    let minY = max(0, Int(floor(destination.y - radiusY)))
+    let maxY = min(height - 1, Int(ceil(destination.y + radiusY)))
+
+    guard minX <= maxX, minY <= maxY else {
+        return
+    }
+
+    for y in minY...maxY {
+        for x in minX...maxX {
+            let nx = (CGFloat(x) - destination.x) / radiusX
+            let ny = (CGFloat(y) - destination.y) / radiusY
+            let distance = sqrt(nx * nx + ny * ny)
+
+            guard distance < 1 else {
+                continue
+            }
+
+            let alpha = smoothstep(edge0: 1.0, edge1: 0.18, x: distance) * 0.98
+            guard alpha > 0 else {
+                continue
+            }
+
+            let sample = bilinearSample(source, x: CGFloat(x) - dx, y: CGFloat(y) - dy)
+            let index = (y * width + x) * 4
+
+            for c in 0..<3 {
+                let original = CGFloat(output.pixels[index + c])
+                let corrected = CGFloat(sample[c])
+                output.pixels[index + c] = UInt8(clamping: Int(original * (1 - alpha) + corrected * alpha))
+            }
+            output.pixels[index + 3] = 255
+        }
+    }
+}
+
+private func attenuateOriginalPupil(
+    source: RGBAImage,
+    output: inout RGBAImage,
+    point: CGPoint,
+    delta: CGVector,
+    radiusX: CGFloat,
+    radiusY: CGFloat
+) {
+    let width = source.width
+    let height = source.height
+    let minX = max(0, Int(floor(point.x - radiusX)))
+    let maxX = min(width - 1, Int(ceil(point.x + radiusX)))
+    let minY = max(0, Int(floor(point.y - radiusY)))
+    let maxY = min(height - 1, Int(ceil(point.y + radiusY)))
+
+    guard minX <= maxX, minY <= maxY else {
+        return
+    }
+
+    for y in minY...maxY {
+        for x in minX...maxX {
+            let nx = (CGFloat(x) - point.x) / radiusX
+            let ny = (CGFloat(y) - point.y) / radiusY
+            let distance = sqrt(nx * nx + ny * ny)
+
+            guard distance < 1 else {
+                continue
+            }
+
+            let alpha = smoothstep(edge0: 1.0, edge1: 0.20, x: distance) * 0.48
+            let sample = bilinearSample(
+                source,
+                x: CGFloat(x) + delta.dx * 0.82,
+                y: CGFloat(y) + delta.dy * 0.82
+            )
+            let index = (y * width + x) * 4
+
+            for c in 0..<3 {
+                let original = CGFloat(output.pixels[index + c])
+                let corrected = CGFloat(sample[c])
+                output.pixels[index + c] = UInt8(clamping: Int(original * (1 - alpha) + corrected * alpha))
+            }
+            output.pixels[index + 3] = 255
+        }
+    }
 }
 
 private func applyEyeShift(eye: EyeRenderData, source: RGBAImage, output: inout RGBAImage, strength: CGFloat) {
@@ -437,70 +580,224 @@ private func bilinearSample(_ image: RGBAImage, x: CGFloat, y: CGFloat) -> [UInt
     return result
 }
 
-private func detectDarkPupil(contour: [CGPoint], in image: RGBAImage) -> CGPoint? {
+private func detectDarkPupil(contour: [CGPoint], visionPupil: CGPoint?, in image: RGBAImage) -> CGPoint? {
+    guard contour.count >= 4 else {
+        return nil
+    }
+
     let bounds = normalizedBounds(contour)
     let width = image.width
     let height = image.height
-    let centerX = bounds.midX * CGFloat(width)
-    let centerY = bounds.midY * CGFloat(height)
-    let radiusX = max(6, bounds.width * CGFloat(width) * 0.52)
-    let radiusY = max(4, bounds.height * CGFloat(height) * 0.48)
+    let paddingX = max(2, Int(ceil(bounds.width * CGFloat(width) * 0.10)))
+    let paddingY = max(2, Int(ceil(bounds.height * CGFloat(height) * 0.16)))
+    let minX = max(0, Int(floor(bounds.minX * CGFloat(width))) - paddingX)
+    let maxX = min(width - 1, Int(ceil(bounds.maxX * CGFloat(width))) + paddingX)
+    let minY = max(0, Int(floor(bounds.minY * CGFloat(height))) - paddingY)
+    let maxY = min(height - 1, Int(ceil(bounds.maxY * CGFloat(height))) + paddingY)
+    let roiWidth = maxX - minX + 1
+    let roiHeight = maxY - minY + 1
 
-    let minX = max(0, Int(floor(centerX - radiusX)))
-    let maxX = min(width - 1, Int(ceil(centerX + radiusX)))
-    let minY = max(0, Int(floor(centerY - radiusY)))
-    let maxY = min(height - 1, Int(ceil(centerY + radiusY)))
-
-    var minLuma = CGFloat.greatestFiniteMagnitude
-    var totalLuma: CGFloat = 0
-    var count: CGFloat = 0
-
-    for y in minY...maxY {
-        for x in minX...maxX {
-            let nx = (CGFloat(x) - centerX) / radiusX
-            let ny = (CGFloat(y) - centerY) / radiusY
-            guard nx * nx + ny * ny <= 1 else {
-                continue
-            }
-
-            let luma = luminance(image, x: x, y: y)
-            minLuma = min(minLuma, luma)
-            totalLuma += luma
-            count += 1
-        }
-    }
-
-    guard count > 0, minLuma.isFinite else {
+    guard roiWidth > 1, roiHeight > 1 else {
         return nil
     }
 
-    let meanLuma = totalLuma / count
-    let threshold = minLuma + (meanLuma - minLuma) * 0.70
-    var weightedX: CGFloat = 0
-    var weightedY: CGFloat = 0
-    var totalWeight: CGFloat = 0
+    var mask = [Bool](repeating: false, count: roiWidth * roiHeight)
+    var lumas: [CGFloat] = []
 
     for y in minY...maxY {
         for x in minX...maxX {
-            let nx = (CGFloat(x) - centerX) / radiusX
-            let ny = (CGFloat(y) - centerY) / radiusY
-            guard nx * nx + ny * ny <= 1 else {
-                continue
+            let normalized = CGPoint(
+                x: (CGFloat(x) + 0.5) / CGFloat(width),
+                y: (CGFloat(y) + 0.5) / CGFloat(height)
+            )
+            let inMask = pointInPolygon(normalized, polygon: contour)
+            if inMask {
+                mask[(y - minY) * roiWidth + (x - minX)] = true
+                lumas.append(luminance(image, x: x, y: y))
             }
-
-            let luma = luminance(image, x: x, y: y)
-            let weight = max(0, threshold - luma)
-            weightedX += CGFloat(x) * weight
-            weightedY += CGFloat(y) * weight
-            totalWeight += weight
         }
     }
 
-    guard totalWeight > 0 else {
+    guard lumas.count >= 6 else {
         return nil
     }
 
-    return CGPoint(x: (weightedX / totalWeight) / CGFloat(width), y: (weightedY / totalWeight) / CGFloat(height))
+    let threshold = percentile(lumas, p: 0.28)
+    let minArea = max(2, Int(Double(lumas.count) * 0.015))
+    let maxArea = max(minArea + 1, Int(Double(lumas.count) * 0.55))
+    var visited = [Bool](repeating: false, count: roiWidth * roiHeight)
+    var bestScore: CGFloat = -1
+    var bestCenter: CGPoint?
+
+    for y in minY...maxY {
+        for x in minX...maxX {
+            let localIndex = (y - minY) * roiWidth + (x - minX)
+            guard mask[localIndex], !visited[localIndex], luminance(image, x: x, y: y) <= threshold else {
+                continue
+            }
+
+            let component = floodDarkComponent(
+                startX: x,
+                startY: y,
+                minX: minX,
+                minY: minY,
+                maxX: maxX,
+                maxY: maxY,
+                roiWidth: roiWidth,
+                threshold: threshold,
+                mask: mask,
+                visited: &visited,
+                image: image
+            )
+
+            guard component.area >= minArea, component.area <= maxArea else {
+                continue
+            }
+
+            let center = CGPoint(
+                x: component.sumX / CGFloat(component.area),
+                y: component.sumY / CGFloat(component.area)
+            )
+            let bboxArea = max(1, CGFloat((component.maxX - component.minX + 1) * (component.maxY - component.minY + 1)))
+            let compactness = min(CGFloat(component.area) / bboxArea, 1)
+            let idealArea = max(CGFloat(minArea), CGFloat(lumas.count) * 0.08)
+            let areaScore = 1 - min(abs(CGFloat(component.area) - idealArea) / idealArea, 1)
+            let darknessScore = 1 - min((component.lumaSum / CGFloat(component.area)) / 255, 1)
+            let distanceScore = pupilDistanceScore(
+                center: center,
+                fallbackCenter: CGPoint(x: bounds.midX * CGFloat(width), y: bounds.midY * CGFloat(height)),
+                visionPupil: visionPupil,
+                eyeWidth: bounds.width * CGFloat(width),
+                width: width,
+                height: height
+            )
+            let score = darknessScore * 0.42 + areaScore * 0.22 + compactness * 0.16 + distanceScore * 0.20
+
+            if score > bestScore {
+                bestScore = score
+                bestCenter = center
+            }
+        }
+    }
+
+    guard let bestCenter, bestScore >= 0.32 else {
+        return nil
+    }
+
+    return CGPoint(x: bestCenter.x / CGFloat(width), y: bestCenter.y / CGFloat(height))
+}
+
+private struct DarkComponent {
+    var area: Int = 0
+    var sumX: CGFloat = 0
+    var sumY: CGFloat = 0
+    var lumaSum: CGFloat = 0
+    var minX: Int = .max
+    var minY: Int = .max
+    var maxX: Int = .min
+    var maxY: Int = .min
+}
+
+private func floodDarkComponent(
+    startX: Int,
+    startY: Int,
+    minX: Int,
+    minY: Int,
+    maxX: Int,
+    maxY: Int,
+    roiWidth: Int,
+    threshold: CGFloat,
+    mask: [Bool],
+    visited: inout [Bool],
+    image: RGBAImage
+) -> DarkComponent {
+    var component = DarkComponent()
+    var queue = [(x: startX, y: startY)]
+    var head = 0
+
+    while head < queue.count {
+        let current = queue[head]
+        head += 1
+
+        guard current.x >= minX, current.x <= maxX, current.y >= minY, current.y <= maxY else {
+            continue
+        }
+
+        let localIndex = (current.y - minY) * roiWidth + (current.x - minX)
+        guard mask[localIndex], !visited[localIndex] else {
+            continue
+        }
+
+        let luma = luminance(image, x: current.x, y: current.y)
+        guard luma <= threshold else {
+            continue
+        }
+
+        visited[localIndex] = true
+        component.area += 1
+        component.sumX += CGFloat(current.x)
+        component.sumY += CGFloat(current.y)
+        component.lumaSum += luma
+        component.minX = min(component.minX, current.x)
+        component.minY = min(component.minY, current.y)
+        component.maxX = max(component.maxX, current.x)
+        component.maxY = max(component.maxY, current.y)
+
+        queue.append((current.x + 1, current.y))
+        queue.append((current.x - 1, current.y))
+        queue.append((current.x, current.y + 1))
+        queue.append((current.x, current.y - 1))
+    }
+
+    return component
+}
+
+private func pupilDistanceScore(
+    center: CGPoint,
+    fallbackCenter: CGPoint,
+    visionPupil: CGPoint?,
+    eyeWidth: CGFloat,
+    width: Int,
+    height: Int
+) -> CGFloat {
+    let reference = visionPupil.map {
+        CGPoint(x: $0.x * CGFloat(width), y: $0.y * CGFloat(height))
+    } ?? fallbackCenter
+    let distance = hypot(center.x - reference.x, center.y - reference.y)
+    return 1 - min(distance / max(eyeWidth * 0.45, 1), 1)
+}
+
+private func percentile(_ values: [CGFloat], p: CGFloat) -> CGFloat {
+    guard !values.isEmpty else {
+        return 0
+    }
+
+    let sorted = values.sorted()
+    let index = min(max(Int(CGFloat(sorted.count - 1) * p), 0), sorted.count - 1)
+    return sorted[index]
+}
+
+private func pointInPolygon(_ point: CGPoint, polygon: [CGPoint]) -> Bool {
+    guard polygon.count >= 3 else {
+        return false
+    }
+
+    var isInside = false
+    var j = polygon.count - 1
+    for i in 0..<polygon.count {
+        let pi = polygon[i]
+        let pj = polygon[j]
+        if (pi.y > point.y) != (pj.y > point.y) {
+            let denominator = pj.y - pi.y
+            let safeDenominator = abs(denominator) < CGFloat.ulpOfOne ? CGFloat.ulpOfOne : denominator
+            let xIntersection = (pj.x - pi.x) * (point.y - pi.y) / safeDenominator + pi.x
+            if point.x < xIntersection {
+                isInside.toggle()
+            }
+        }
+        j = i
+    }
+    return isInside
 }
 
 private func luminance(_ image: RGBAImage, x: Int, y: Int) -> CGFloat {
@@ -586,11 +883,23 @@ private extension CGRect {
 
 do {
     let options = try parseOptions()
+    if options.inputDir != nil {
+        try processSequence(options)
+    } else {
+        try processSingle(options)
+    }
+} catch {
+    fputs("GazeEffectImageTool: \(error.localizedDescription)\n", stderr)
+    exit(1)
+}
+
+private func processSingle(_ options: Options) throws {
     let input = options.input!
     let output = options.output!
     let cgImage = try resizeIfNeeded(loadCGImage(path: input), maxWidth: options.maxWidth)
     let rgba = try rgbaImage(from: cgImage)
-    let (left, right, faceBounds) = try analyze(image: cgImage, rgba: rgba, verbose: options.verbose)
+    var estimator = makeEstimator(smoothingAlpha: 1.0)
+    let (left, right, faceBounds) = try analyze(image: cgImage, rgba: rgba, estimator: &estimator, verbose: options.verbose)
     let corrected = renderEffect(source: rgba, left: left, right: right, strength: options.strength)
     let correctedImage = try makeCGImage(from: corrected)
 
@@ -606,9 +915,66 @@ do {
     if options.verbose {
         print(output)
     }
-} catch {
-    fputs("GazeEffectImageTool: \(error.localizedDescription)\n", stderr)
-    exit(1)
+}
+
+private func processSequence(_ options: Options) throws {
+    let inputDir = options.inputDir!
+    let outputDir = options.outputDir!
+    let inputURL = URL(fileURLWithPath: inputDir)
+    let outputURL = URL(fileURLWithPath: outputDir)
+    try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
+
+    let frames = try listFrameURLs(in: inputURL)
+    var estimator = makeEstimator(smoothingAlpha: 0.42)
+    var processed = 0
+    var fallback = 0
+
+    for frameURL in frames {
+        let outputFrameURL = outputURL.appendingPathComponent(frameURL.lastPathComponent)
+        let cgImage = try resizeIfNeeded(loadCGImage(path: frameURL.path), maxWidth: options.maxWidth)
+        let rgba = try rgbaImage(from: cgImage)
+
+        do {
+            let (left, right, faceBounds) = try analyze(image: cgImage, rgba: rgba, estimator: &estimator, verbose: false)
+            let corrected = renderEffect(source: rgba, left: left, right: right, strength: options.strength)
+            let correctedImage = try makeCGImage(from: corrected)
+            try writeJPEG(correctedImage, to: outputFrameURL.path)
+
+            if let metadataDir = options.metadataDir {
+                let metadataURL = URL(fileURLWithPath: metadataDir)
+                    .appendingPathComponent(frameURL.deletingPathExtension().lastPathComponent)
+                    .appendingPathExtension("json")
+                try writeMetadata(faceBounds: faceBounds, left: left, right: right, to: metadataURL.path)
+            }
+            processed += 1
+        } catch {
+            estimator.reset()
+            try writeJPEG(cgImage, to: outputFrameURL.path)
+            fallback += 1
+            if options.verbose {
+                fputs("fallback \(frameURL.lastPathComponent): \(error.localizedDescription)\n", stderr)
+            }
+        }
+    }
+
+    if options.verbose {
+        print("processed=\(processed) fallback=\(fallback)")
+    }
+}
+
+private func listFrameURLs(in url: URL) throws -> [URL] {
+    guard let urls = try? FileManager.default.contentsOfDirectory(
+        at: url,
+        includingPropertiesForKeys: nil,
+        options: [.skipsHiddenFiles]
+    ) else {
+        throw ToolError.cannotListDirectory(url.path)
+    }
+
+    let allowed = Set(["jpg", "jpeg", "png"])
+    return urls
+        .filter { allowed.contains($0.pathExtension.lowercased()) }
+        .sorted { $0.lastPathComponent < $1.lastPathComponent }
 }
 
 private func writeMetadata(faceBounds: CGRect, left: EyeRenderData, right: EyeRenderData, to path: String) throws {

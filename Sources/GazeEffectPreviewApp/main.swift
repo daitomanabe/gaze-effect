@@ -242,18 +242,39 @@ private final class FrameRenderView: NSView {
 
         let sourceView = viewPoint(sourcePupil, in: imageRect)
         let targetView = viewPoint(targetPupil, in: imageRect)
-        let dx = targetView.x - sourceView.x
-        let dy = targetView.y - sourceView.y
+        let eyeRect = normalizedBounds(eye.contour).viewRect(in: imageRect)
+        var dx = (targetView.x - sourceView.x) * 1.4
+        var dy = (targetView.y - sourceView.y) * 1.4
+        dx = min(max(dx, -eyeRect.width * 0.34), eyeRect.width * 0.34)
+        dy = min(max(dy, -eyeRect.height * 0.72), eyeRect.height * 0.72)
 
         guard hypot(dx, dy) >= 0.75 else {
             return
         }
 
-        let eyeRect = normalizedBounds(eye.contour).viewRect(in: imageRect)
-        let maskRect = eyeRect.expanded(widthScale: 0.42, heightScale: 0.62, minWidth: 34, minHeight: 18)
+        let destination = NSPoint(x: sourceView.x + dx, y: sourceView.y + dy)
+        let radiusX = max(4, eyeRect.width * 0.23)
+        let radiusY = max(3, eyeRect.height * 0.50)
+        let sourceMask = NSRect(
+            x: sourceView.x - radiusX * 1.18,
+            y: sourceView.y - radiusY * 1.08,
+            width: radiusX * 2.36,
+            height: radiusY * 2.16
+        )
+        let destinationMask = NSRect(
+            x: destination.x - radiusX,
+            y: destination.y - radiusY,
+            width: radiusX * 2,
+            height: radiusY * 2
+        )
 
         NSGraphicsContext.saveGraphicsState()
-        NSBezierPath(ovalIn: maskRect).addClip()
+        NSBezierPath(ovalIn: sourceMask).addClip()
+        drawCameraImage(image, in: imageRect.offsetBy(dx: -dx * 0.82, dy: -dy * 0.82), fraction: 0.48)
+        NSGraphicsContext.restoreGraphicsState()
+
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(ovalIn: destinationMask).addClip()
         drawCameraImage(image, in: imageRect.offsetBy(dx: dx, dy: dy), fraction: 0.98)
         NSGraphicsContext.restoreGraphicsState()
     }
@@ -558,10 +579,12 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
 
         let leftContour = normalizedPoints(leftEye, in: face)
         let rightContour = normalizedPoints(rightEye, in: face)
-        let leftPupil = detectDarkPupil(contour: leftContour, in: pixelBuffer)
-            ?? normalizedPupil(landmarks.leftPupil, in: face)
-        let rightPupil = detectDarkPupil(contour: rightContour, in: pixelBuffer)
-            ?? normalizedPupil(landmarks.rightPupil, in: face)
+        let visionLeftPupil = normalizedPupil(landmarks.leftPupil, in: face)
+        let visionRightPupil = normalizedPupil(landmarks.rightPupil, in: face)
+        let leftPupil = detectDarkPupil(contour: leftContour, visionPupil: visionLeftPupil, in: pixelBuffer)
+            ?? visionLeftPupil
+        let rightPupil = detectDarkPupil(contour: rightContour, visionPupil: visionRightPupil, in: pixelBuffer)
+            ?? visionRightPupil
 
         let result = estimator.estimate(
             from: FaceLandmarks(
@@ -622,7 +645,18 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
         CGRect(x: rect.minX, y: 1.0 - rect.maxY, width: rect.width, height: rect.height)
     }
 
-    private func detectDarkPupil(contour: [CGPoint], in pixelBuffer: CVPixelBuffer) -> CGPoint? {
+    private struct DarkComponent {
+        var area: Int = 0
+        var sumX: CGFloat = 0
+        var sumY: CGFloat = 0
+        var lumaSum: CGFloat = 0
+        var minX: Int = .max
+        var minY: Int = .max
+        var maxX: Int = .min
+        var maxY: Int = .min
+    }
+
+    private func detectDarkPupil(contour: [CGPoint], visionPupil: CGPoint?, in pixelBuffer: CVPixelBuffer) -> CGPoint? {
         guard contour.count >= 4 else {
             return nil
         }
@@ -641,72 +675,211 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
         let buffer = baseAddress.assumingMemoryBound(to: UInt8.self)
         let bounds = normalizedBounds(contour)
-        let centerX = bounds.midX * CGFloat(width)
-        let centerY = bounds.midY * CGFloat(height)
-        let radiusX = max(6, bounds.width * CGFloat(width) * 0.52)
-        let radiusY = max(4, bounds.height * CGFloat(height) * 0.48)
-        let minX = max(0, Int(floor(centerX - radiusX)))
-        let maxX = min(width - 1, Int(ceil(centerX + radiusX)))
-        let minY = max(0, Int(floor(centerY - radiusY)))
-        let maxY = min(height - 1, Int(ceil(centerY + radiusY)))
+        let paddingX = max(2, Int(ceil(bounds.width * CGFloat(width) * 0.10)))
+        let paddingY = max(2, Int(ceil(bounds.height * CGFloat(height) * 0.16)))
+        let minX = max(0, Int(floor(bounds.minX * CGFloat(width))) - paddingX)
+        let maxX = min(width - 1, Int(ceil(bounds.maxX * CGFloat(width))) + paddingX)
+        let minY = max(0, Int(floor(bounds.minY * CGFloat(height))) - paddingY)
+        let maxY = min(height - 1, Int(ceil(bounds.maxY * CGFloat(height))) + paddingY)
+        let roiWidth = maxX - minX + 1
+        let roiHeight = maxY - minY + 1
 
-        guard minX <= maxX, minY <= maxY else {
+        guard roiWidth > 1, roiHeight > 1 else {
             return nil
         }
 
-        var minLuma = CGFloat.greatestFiniteMagnitude
-        var totalLuma: CGFloat = 0
-        var count: CGFloat = 0
+        var mask = [Bool](repeating: false, count: roiWidth * roiHeight)
+        var lumas: [CGFloat] = []
 
         for y in minY...maxY {
             for x in minX...maxX {
-                let nx = (CGFloat(x) - centerX) / radiusX
-                let ny = (CGFloat(y) - centerY) / radiusY
-                guard nx * nx + ny * ny <= 1 else {
-                    continue
+                let normalized = CGPoint(
+                    x: (CGFloat(x) + 0.5) / CGFloat(width),
+                    y: (CGFloat(y) + 0.5) / CGFloat(height)
+                )
+                if pointInPolygon(normalized, polygon: contour) {
+                    mask[(y - minY) * roiWidth + (x - minX)] = true
+                    lumas.append(bgraLuminance(buffer: buffer, bytesPerRow: bytesPerRow, x: x, y: y))
                 }
-
-                let luma = bgraLuminance(buffer: buffer, bytesPerRow: bytesPerRow, x: x, y: y)
-                minLuma = min(minLuma, luma)
-                totalLuma += luma
-                count += 1
             }
         }
 
-        guard count > 0, minLuma.isFinite else {
+        guard lumas.count >= 6 else {
             return nil
         }
 
-        let meanLuma = totalLuma / count
-        let threshold = minLuma + (meanLuma - minLuma) * 0.70
-        var weightedX: CGFloat = 0
-        var weightedY: CGFloat = 0
-        var totalWeight: CGFloat = 0
+        let threshold = percentile(lumas, p: 0.28)
+        let minArea = max(2, Int(Double(lumas.count) * 0.015))
+        let maxArea = max(minArea + 1, Int(Double(lumas.count) * 0.55))
+        var visited = [Bool](repeating: false, count: roiWidth * roiHeight)
+        var bestScore: CGFloat = -1
+        var bestCenter: CGPoint?
 
         for y in minY...maxY {
             for x in minX...maxX {
-                let nx = (CGFloat(x) - centerX) / radiusX
-                let ny = (CGFloat(y) - centerY) / radiusY
-                guard nx * nx + ny * ny <= 1 else {
+                let localIndex = (y - minY) * roiWidth + (x - minX)
+                guard mask[localIndex],
+                      !visited[localIndex],
+                      bgraLuminance(buffer: buffer, bytesPerRow: bytesPerRow, x: x, y: y) <= threshold else {
                     continue
                 }
 
-                let luma = bgraLuminance(buffer: buffer, bytesPerRow: bytesPerRow, x: x, y: y)
-                let weight = max(0, threshold - luma)
-                weightedX += CGFloat(x) * weight
-                weightedY += CGFloat(y) * weight
-                totalWeight += weight
+                let component = floodDarkComponent(
+                    startX: x,
+                    startY: y,
+                    minX: minX,
+                    minY: minY,
+                    maxX: maxX,
+                    maxY: maxY,
+                    roiWidth: roiWidth,
+                    threshold: threshold,
+                    mask: mask,
+                    visited: &visited,
+                    buffer: buffer,
+                    bytesPerRow: bytesPerRow
+                )
+
+                guard component.area >= minArea, component.area <= maxArea else {
+                    continue
+                }
+
+                let center = CGPoint(
+                    x: component.sumX / CGFloat(component.area),
+                    y: component.sumY / CGFloat(component.area)
+                )
+                let bboxArea = max(1, CGFloat((component.maxX - component.minX + 1) * (component.maxY - component.minY + 1)))
+                let compactness = min(CGFloat(component.area) / bboxArea, 1)
+                let idealArea = max(CGFloat(minArea), CGFloat(lumas.count) * 0.08)
+                let areaScore = 1 - min(abs(CGFloat(component.area) - idealArea) / idealArea, 1)
+                let darknessScore = 1 - min((component.lumaSum / CGFloat(component.area)) / 255, 1)
+                let distanceScore = pupilDistanceScore(
+                    center: center,
+                    fallbackCenter: CGPoint(x: bounds.midX * CGFloat(width), y: bounds.midY * CGFloat(height)),
+                    visionPupil: visionPupil,
+                    eyeWidth: bounds.width * CGFloat(width),
+                    width: width,
+                    height: height
+                )
+                let score = darknessScore * 0.42 + areaScore * 0.22 + compactness * 0.16 + distanceScore * 0.20
+
+                if score > bestScore {
+                    bestScore = score
+                    bestCenter = center
+                }
             }
         }
 
-        guard totalWeight > 0 else {
+        guard let bestCenter, bestScore >= 0.32 else {
             return nil
         }
 
         return CGPoint(
-            x: (weightedX / totalWeight) / CGFloat(width),
-            y: (weightedY / totalWeight) / CGFloat(height)
+            x: bestCenter.x / CGFloat(width),
+            y: bestCenter.y / CGFloat(height)
         )
+    }
+
+    private func floodDarkComponent(
+        startX: Int,
+        startY: Int,
+        minX: Int,
+        minY: Int,
+        maxX: Int,
+        maxY: Int,
+        roiWidth: Int,
+        threshold: CGFloat,
+        mask: [Bool],
+        visited: inout [Bool],
+        buffer: UnsafePointer<UInt8>,
+        bytesPerRow: Int
+    ) -> DarkComponent {
+        var component = DarkComponent()
+        var queue = [(x: startX, y: startY)]
+        var head = 0
+
+        while head < queue.count {
+            let current = queue[head]
+            head += 1
+
+            guard current.x >= minX, current.x <= maxX, current.y >= minY, current.y <= maxY else {
+                continue
+            }
+
+            let localIndex = (current.y - minY) * roiWidth + (current.x - minX)
+            guard mask[localIndex], !visited[localIndex] else {
+                continue
+            }
+
+            let luma = bgraLuminance(buffer: buffer, bytesPerRow: bytesPerRow, x: current.x, y: current.y)
+            guard luma <= threshold else {
+                continue
+            }
+
+            visited[localIndex] = true
+            component.area += 1
+            component.sumX += CGFloat(current.x)
+            component.sumY += CGFloat(current.y)
+            component.lumaSum += luma
+            component.minX = min(component.minX, current.x)
+            component.minY = min(component.minY, current.y)
+            component.maxX = max(component.maxX, current.x)
+            component.maxY = max(component.maxY, current.y)
+
+            queue.append((current.x + 1, current.y))
+            queue.append((current.x - 1, current.y))
+            queue.append((current.x, current.y + 1))
+            queue.append((current.x, current.y - 1))
+        }
+
+        return component
+    }
+
+    private func pupilDistanceScore(
+        center: CGPoint,
+        fallbackCenter: CGPoint,
+        visionPupil: CGPoint?,
+        eyeWidth: CGFloat,
+        width: Int,
+        height: Int
+    ) -> CGFloat {
+        let reference = visionPupil.map {
+            CGPoint(x: $0.x * CGFloat(width), y: $0.y * CGFloat(height))
+        } ?? fallbackCenter
+        let distance = hypot(center.x - reference.x, center.y - reference.y)
+        return 1 - min(distance / max(eyeWidth * 0.45, 1), 1)
+    }
+
+    private func percentile(_ values: [CGFloat], p: CGFloat) -> CGFloat {
+        guard !values.isEmpty else {
+            return 0
+        }
+
+        let sorted = values.sorted()
+        let index = min(max(Int(CGFloat(sorted.count - 1) * p), 0), sorted.count - 1)
+        return sorted[index]
+    }
+
+    private func pointInPolygon(_ point: CGPoint, polygon: [CGPoint]) -> Bool {
+        guard polygon.count >= 3 else {
+            return false
+        }
+
+        var isInside = false
+        var j = polygon.count - 1
+        for i in 0..<polygon.count {
+            let pi = polygon[i]
+            let pj = polygon[j]
+            if (pi.y > point.y) != (pj.y > point.y) {
+                let denominator = pj.y - pi.y
+                let safeDenominator = abs(denominator) < CGFloat.ulpOfOne ? CGFloat.ulpOfOne : denominator
+                let xIntersection = (pj.x - pi.x) * (point.y - pi.y) / safeDenominator + pi.x
+                if point.x < xIntersection {
+                    isInside.toggle()
+                }
+            }
+            j = i
+        }
+        return isInside
     }
 
     private func bgraLuminance(buffer: UnsafePointer<UInt8>, bytesPerRow: Int, x: Int, y: Int) -> CGFloat {

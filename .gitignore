@@ -5,6 +5,7 @@ DerivedData/
 build/
 dist/
 artifacts/
+Assets/test-video.mp4
 Assets/examples/source/
 Assets/examples/metadata/
 

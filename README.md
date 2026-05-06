@@ -58,6 +58,16 @@ Source: [Library of Congress](https://www.loc.gov/pictures/item/90713134/)
 
 Source: [Library of Congress](https://www.loc.gov/pictures/item/2004664360/)
 
+## Video Test
+
+This short test uses a local camera recording, samples it at 12 fps, applies the gaze correction frame by frame, and encodes both clips at 36 fps for roughly 3x playback. The README videos are downscaled to 480 x 270 and muted to keep the repository small.
+
+| Original, 3x playback | Gaze Effect result, 3x playback |
+| --- | --- |
+| <video src="Assets/examples/video/gaze-effect-test-original-3x.mp4" controls muted playsinline width="360"></video> | <video src="Assets/examples/video/gaze-effect-test-corrected-3x.mp4" controls muted playsinline width="360"></video> |
+
+Fallback links: [original 3x MP4](Assets/examples/video/gaze-effect-test-original-3x.mp4), [corrected 3x MP4](Assets/examples/video/gaze-effect-test-corrected-3x.mp4)
+
 ## Status
 
 This repository currently contains the public project description and the first testable Swift core for estimating eye-contact correction vectors. The production Camera Extension target, Metal/Core Image renderer, signing, and notarized installer are the next implementation steps.
@@ -83,12 +93,12 @@ flowchart LR
 1. Capture frames from the selected physical camera.
 2. Run `VNDetectFaceLandmarksRequest` on a long-edge 640 px analysis frame, targeting up to 30 Hz while every camera frame is still displayed.
 3. Select the primary face by largest bounding box.
-4. Read `leftEye`, `rightEye`, `leftPupil`, and `rightPupil`.
+4. Estimate the pupil with a dark-blob search inside each eye contour, using Vision pupil points only as a fallback.
 5. Reject correction when face confidence is low, landmarks are missing, or the eye aspect ratio indicates blinking.
-6. Estimate a per-eye correction vector that moves the pupil toward the eye contour centroid.
-7. Clamp the vector to a small fraction of eye width to avoid uncanny distortion.
-8. Smooth correction across frames.
-9. Render only a feathered elliptical eye ROI, leaving eyelids and skin stable.
+6. Estimate a per-eye correction vector toward a camera-facing target derived from the eye corners and eyelid bounds.
+7. Smooth measured pupil positions and correction vectors across frames.
+8. Render only a small feathered iris/pupil patch, leaving eyelids and surrounding skin stable.
+9. Pass through unstable frames without changing their timing.
 10. Emit the processed pixel buffer through `CMIOExtensionStream`.
 
 ## Apple APIs
@@ -106,7 +116,7 @@ Apple's Camera Extension workflow is documented in [Creating a camera extension 
 
 - `Sources/GazeEffectCore/GazeEffectCore.swift`: frame-independent eye-contact estimation logic.
 - `Sources/GazeEffectCoreCheck/main.swift`: geometry and safety checks that run without Xcode.
-- `Sources/GazeEffectImageTool/main.swift`: still-image correction tool used to generate the README examples.
+- `Sources/GazeEffectImageTool/main.swift`: still-image and frame-sequence correction tool used to generate the README examples.
 - `scripts/build-installer.sh`: builds an unsigned developer-preview macOS installer package.
 
 The core package intentionally keeps Vision, AVFoundation, Metal, and Core Media I/O out of the library target. This keeps the correction logic testable and allows the same estimator to run inside a Camera Extension, preview app, or offline renderer.
@@ -216,7 +226,7 @@ The first production version should avoid replacing the whole eye. A small local
 - mask: ellipse around each eye with soft feather
 - source: original eye texture
 - warp: vector field strongest near pupil and fading at the eyelid boundary
-- clamp: around `0.12-0.18 * eyeWidth`
+- clamp: conservative horizontal/vertical limits around the pupil patch
 - fallback: pass-through frame when face/eyes are unstable
 
 For a stronger future version, a 3D eye model or learned gaze-redirection model can be added. The local ROI warp remains the practical MVP for a real-time camera extension.

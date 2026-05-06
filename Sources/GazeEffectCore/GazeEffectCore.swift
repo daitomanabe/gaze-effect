@@ -4,18 +4,30 @@ import Foundation
 public struct EyeContactConfiguration: Sendable {
     public var blinkAspectRatioThreshold: CGFloat
     public var maxShiftAsEyeWidth: CGFloat
+    public var maxHorizontalShiftAsEyeWidth: CGFloat
+    public var maxVerticalShiftAsEyeHeight: CGFloat
+    public var targetVerticalBiasAsEyeHeight: CGFloat
     public var smoothingAlpha: CGFloat
+    public var pupilSmoothingAlpha: CGFloat
     public var minConfidence: CGFloat
 
     public init(
         blinkAspectRatioThreshold: CGFloat = 0.12,
-        maxShiftAsEyeWidth: CGFloat = 0.16,
+        maxShiftAsEyeWidth: CGFloat = 0.28,
+        maxHorizontalShiftAsEyeWidth: CGFloat? = nil,
+        maxVerticalShiftAsEyeHeight: CGFloat = 0.60,
+        targetVerticalBiasAsEyeHeight: CGFloat = 0.35,
         smoothingAlpha: CGFloat = 0.35,
+        pupilSmoothingAlpha: CGFloat = 0.45,
         minConfidence: CGFloat = 0.35
     ) {
         self.blinkAspectRatioThreshold = blinkAspectRatioThreshold
         self.maxShiftAsEyeWidth = maxShiftAsEyeWidth
+        self.maxHorizontalShiftAsEyeWidth = maxHorizontalShiftAsEyeWidth ?? maxShiftAsEyeWidth
+        self.maxVerticalShiftAsEyeHeight = maxVerticalShiftAsEyeHeight
+        self.targetVerticalBiasAsEyeHeight = targetVerticalBiasAsEyeHeight
         self.smoothingAlpha = smoothingAlpha
+        self.pupilSmoothingAlpha = pupilSmoothingAlpha
         self.minConfidence = minConfidence
     }
 }
@@ -85,16 +97,20 @@ public struct EyeContactResult: Sendable, Equatable {
 public struct EyeContactEstimator: Sendable {
     public var configuration: EyeContactConfiguration
 
-    private var previousLeftTarget: CGPoint?
-    private var previousRightTarget: CGPoint?
+    private var previousLeftPupil: CGPoint?
+    private var previousRightPupil: CGPoint?
+    private var previousLeftDelta: CGVector?
+    private var previousRightDelta: CGVector?
 
     public init(configuration: EyeContactConfiguration = EyeContactConfiguration()) {
         self.configuration = configuration
     }
 
     public mutating func reset() {
-        previousLeftTarget = nil
-        previousRightTarget = nil
+        previousLeftPupil = nil
+        previousRightPupil = nil
+        previousLeftDelta = nil
+        previousRightDelta = nil
     }
 
     public mutating func estimate(from landmarks: FaceLandmarks) -> EyeContactResult {
@@ -103,54 +119,86 @@ public struct EyeContactEstimator: Sendable {
             return EyeContactResult(left: nil, right: nil)
         }
 
-        let left = correction(
+        let leftResult = correction(
             for: landmarks.leftEye,
-            previousTarget: previousLeftTarget
+            previousPupil: previousLeftPupil,
+            previousDelta: previousLeftDelta
         )
-        let right = correction(
+        let rightResult = correction(
             for: landmarks.rightEye,
-            previousTarget: previousRightTarget
+            previousPupil: previousRightPupil,
+            previousDelta: previousRightDelta
         )
 
-        previousLeftTarget = left?.targetPupil
-        previousRightTarget = right?.targetPupil
+        let left = leftResult.correction
+        let right = rightResult.correction
+        previousLeftPupil = leftResult.smoothedPupil
+        previousRightPupil = rightResult.smoothedPupil
+        previousLeftDelta = left?.delta
+        previousRightDelta = right?.delta
 
         return EyeContactResult(left: left, right: right)
     }
 
-    private func correction(for eye: EyeLandmarks, previousTarget: CGPoint?) -> EyeCorrection? {
+    private func correction(
+        for eye: EyeLandmarks,
+        previousPupil: CGPoint?,
+        previousDelta: CGVector?
+    ) -> InternalCorrectionResult {
         guard eye.contour.count >= 4 else {
-            return nil
+            return InternalCorrectionResult(correction: nil, smoothedPupil: nil)
         }
 
         let bounds = eye.contour.boundingRect
         guard bounds.width > 0, bounds.height > 0 else {
-            return nil
+            return InternalCorrectionResult(correction: nil, smoothedPupil: nil)
         }
 
         let aspectRatio = bounds.height / bounds.width
         let isBlinking = aspectRatio < configuration.blinkAspectRatioThreshold
         guard !isBlinking else {
-            return nil
+            return InternalCorrectionResult(correction: nil, smoothedPupil: nil)
         }
 
-        let sourcePupil = eye.pupil ?? eye.contour.centroid
-        let rawTarget = eye.contour.centroid
-        let target = smooth(current: rawTarget, previous: previousTarget, alpha: configuration.smoothingAlpha)
+        let measuredPupil = eye.pupil ?? eye.contour.centroid
+        let sourcePupil = smooth(
+            current: measuredPupil,
+            previous: previousPupil,
+            alpha: configuration.pupilSmoothingAlpha
+        )
+        let rawTarget = cameraFacingTarget(for: eye.contour, bounds: bounds)
 
-        let unclampedDelta = CGVector(dx: target.x - sourcePupil.x, dy: target.y - sourcePupil.y)
-        let maxShift = max(0, bounds.width * configuration.maxShiftAsEyeWidth)
-        let delta = unclampedDelta.clamped(maxLength: maxShift)
+        let unclampedDelta = CGVector(dx: rawTarget.x - sourcePupil.x, dy: rawTarget.y - sourcePupil.y)
+        let maxDX = max(0, bounds.width * configuration.maxHorizontalShiftAsEyeWidth)
+        let maxDY = max(0, bounds.height * configuration.maxVerticalShiftAsEyeHeight)
+        let clampedDelta = unclampedDelta.clamped(maxDX: maxDX, maxDY: maxDY)
+        let delta = smooth(current: clampedDelta, previous: previousDelta, alpha: configuration.smoothingAlpha)
         let correctedTarget = CGPoint(x: sourcePupil.x + delta.dx, y: sourcePupil.y + delta.dy)
-        let confidence = confidenceForCorrection(delta: delta, maxShift: maxShift, aspectRatio: aspectRatio)
+        let confidence = confidenceForCorrection(delta: delta, maxDX: maxDX, maxDY: maxDY, aspectRatio: aspectRatio)
 
-        return EyeCorrection(
+        let correction = EyeCorrection(
             sourcePupil: sourcePupil,
             targetPupil: correctedTarget,
             delta: delta,
             eyeBounds: bounds,
             confidence: confidence,
             isBlinking: false
+        )
+        return InternalCorrectionResult(correction: correction, smoothedPupil: sourcePupil)
+    }
+
+    private func cameraFacingTarget(for contour: [CGPoint], bounds: CGRect) -> CGPoint {
+        let sortedByY = contour.sorted { $0.y < $1.y }
+        let halfCount = max(1, sortedByY.count / 2)
+        let upper = sortedByY.prefix(halfCount)
+        let lower = sortedByY.suffix(halfCount)
+        let upperY = upper.reduce(CGFloat.zero) { $0 + $1.y } / CGFloat(upper.count)
+        let lowerY = lower.reduce(CGFloat.zero) { $0 + $1.y } / CGFloat(lower.count)
+        let centerY = (upperY + lowerY) / 2
+
+        return CGPoint(
+            x: bounds.midX,
+            y: centerY + bounds.height * configuration.targetVerticalBiasAsEyeHeight
         )
     }
 
@@ -166,15 +214,33 @@ public struct EyeContactEstimator: Sendable {
         )
     }
 
-    private func confidenceForCorrection(delta: CGVector, maxShift: CGFloat, aspectRatio: CGFloat) -> CGFloat {
-        guard maxShift > 0 else {
+    private func smooth(current: CGVector, previous: CGVector?, alpha: CGFloat) -> CGVector {
+        guard let previous else {
+            return current
+        }
+
+        let clampedAlpha = min(max(alpha, 0), 1)
+        return CGVector(
+            dx: previous.dx + (current.dx - previous.dx) * clampedAlpha,
+            dy: previous.dy + (current.dy - previous.dy) * clampedAlpha
+        )
+    }
+
+    private func confidenceForCorrection(delta: CGVector, maxDX: CGFloat, maxDY: CGFloat, aspectRatio: CGFloat) -> CGFloat {
+        guard maxDX > 0, maxDY > 0 else {
             return 0
         }
 
-        let shiftCost = min(delta.length / maxShift, 1)
+        let normalizedShift = sqrt((delta.dx / maxDX) * (delta.dx / maxDX) + (delta.dy / maxDY) * (delta.dy / maxDY))
+        let shiftCost = min(normalizedShift, 1)
         let blinkCost = min(max((0.18 - aspectRatio) / 0.18, 0), 1)
         return min(max(1 - shiftCost * 0.35 - blinkCost * 0.45, 0), 1)
     }
+}
+
+private struct InternalCorrectionResult {
+    var correction: EyeCorrection?
+    var smoothedPupil: CGPoint?
 }
 
 private extension Array where Element == CGPoint {
@@ -229,5 +295,12 @@ private extension CGVector {
 
         let scale = maxLength / currentLength
         return CGVector(dx: dx * scale, dy: dy * scale)
+    }
+
+    func clamped(maxDX: CGFloat, maxDY: CGFloat) -> CGVector {
+        CGVector(
+            dx: min(max(dx, -maxDX), maxDX),
+            dy: min(max(dy, -maxDY), maxDY)
+        )
     }
 }
