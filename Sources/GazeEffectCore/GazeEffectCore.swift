@@ -15,10 +15,10 @@ public struct EyeContactConfiguration: Sendable {
         blinkAspectRatioThreshold: CGFloat = 0.12,
         maxShiftAsEyeWidth: CGFloat = 0.28,
         maxHorizontalShiftAsEyeWidth: CGFloat? = nil,
-        maxVerticalShiftAsEyeHeight: CGFloat = 0.60,
-        targetVerticalBiasAsEyeHeight: CGFloat = 0.35,
-        smoothingAlpha: CGFloat = 0.35,
-        pupilSmoothingAlpha: CGFloat = 0.45,
+        maxVerticalShiftAsEyeHeight: CGFloat = 0.18,
+        targetVerticalBiasAsEyeHeight: CGFloat = 0.03,
+        smoothingAlpha: CGFloat = 1.0,
+        pupilSmoothingAlpha: CGFloat = 1.0,
         minConfidence: CGFloat = 0.35
     ) {
         self.blinkAspectRatioThreshold = blinkAspectRatioThreshold

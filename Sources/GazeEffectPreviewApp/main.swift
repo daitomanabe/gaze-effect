@@ -243,18 +243,18 @@ private final class FrameRenderView: NSView {
         let sourceView = viewPoint(sourcePupil, in: imageRect)
         let targetView = viewPoint(targetPupil, in: imageRect)
         let eyeRect = normalizedBounds(eye.contour).viewRect(in: imageRect)
-        var dx = (targetView.x - sourceView.x) * 1.4
-        var dy = (targetView.y - sourceView.y) * 1.4
-        dx = min(max(dx, -eyeRect.width * 0.34), eyeRect.width * 0.34)
-        dy = min(max(dy, -eyeRect.height * 0.72), eyeRect.height * 0.72)
+        var dx = (targetView.x - sourceView.x) * 1.2
+        var dy = (targetView.y - sourceView.y) * 1.2
+        dx = min(max(dx, -eyeRect.width * 0.42), eyeRect.width * 0.42)
+        dy = min(max(dy, -eyeRect.height * 0.22), eyeRect.height * 0.22)
 
         guard hypot(dx, dy) >= 0.75 else {
             return
         }
 
         let destination = NSPoint(x: sourceView.x + dx, y: sourceView.y + dy)
-        let radiusX = max(4, eyeRect.width * 0.23)
-        let radiusY = max(3, eyeRect.height * 0.50)
+        let radiusX = max(4, eyeRect.width * 0.30)
+        let radiusY = max(3, eyeRect.height * 0.62)
         let sourceMask = NSRect(
             x: sourceView.x - radiusX * 1.18,
             y: sourceView.y - radiusY * 1.08,
@@ -270,7 +270,9 @@ private final class FrameRenderView: NSView {
 
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(ovalIn: sourceMask).addClip()
-        drawCameraImage(image, in: imageRect.offsetBy(dx: -dx * 0.82, dy: -dy * 0.82), fraction: 0.48)
+        NSColor(calibratedWhite: 0.86, alpha: 0.58).setFill()
+        NSBezierPath(rect: sourceMask).fill()
+        drawCameraImage(image, in: imageRect.offsetBy(dx: -dx * 0.82, dy: -dy * 0.82), fraction: 0.18)
         NSGraphicsContext.restoreGraphicsState()
 
         NSGraphicsContext.saveGraphicsState()
@@ -388,11 +390,21 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
     private let videoQueue = DispatchQueue(label: "ws.daito.gaze-effect.video")
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
     private weak var containerView: PreviewContainerView?
-    private var estimator = EyeContactEstimator()
+    private var estimator = EyeContactEstimator(
+        configuration: EyeContactConfiguration(
+            blinkAspectRatioThreshold: 0.04,
+            maxShiftAsEyeWidth: 0.38,
+            maxVerticalShiftAsEyeHeight: 0.18,
+            targetVerticalBiasAsEyeHeight: 0.03,
+            smoothingAlpha: 1.0,
+            pupilSmoothingAlpha: 1.0,
+            minConfidence: 0.05
+        )
+    )
     private var lastAnalysisTime: CFTimeInterval = 0
     private var isAnalyzing = false
-    private let analysisFrameInterval: CFTimeInterval = 1.0 / 30.0
-    private let analysisMaxDimension: CGFloat = 640
+    private let analysisFrameInterval: CFTimeInterval = 1.0 / 60.0
+    private let analysisMaxDimension: CGFloat = 720
 
     init(containerView: PreviewContainerView) {
         self.containerView = containerView
@@ -697,7 +709,8 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
                     x: (CGFloat(x) + 0.5) / CGFloat(width),
                     y: (CGFloat(y) + 0.5) / CGFloat(height)
                 )
-                if pointInPolygon(normalized, polygon: contour) {
+                if pointInPolygon(normalized, polygon: contour)
+                    || pointInExpandedEyeRegion(normalized, bounds: bounds) {
                     mask[(y - minY) * roiWidth + (x - minX)] = true
                     lumas.append(bgraLuminance(buffer: buffer, bytesPerRow: bytesPerRow, x: x, y: y))
                 }
@@ -708,9 +721,9 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
             return nil
         }
 
-        let threshold = percentile(lumas, p: 0.28)
-        let minArea = max(2, Int(Double(lumas.count) * 0.015))
-        let maxArea = max(minArea + 1, Int(Double(lumas.count) * 0.55))
+        let threshold = percentile(lumas, p: 0.18)
+        let minArea = max(2, Int(Double(lumas.count) * 0.006))
+        let maxArea = max(minArea + 1, Int(Double(lumas.count) * 0.30))
         var visited = [Bool](repeating: false, count: roiWidth * roiHeight)
         var bestScore: CGFloat = -1
         var bestCenter: CGPoint?
@@ -749,7 +762,7 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
                 )
                 let bboxArea = max(1, CGFloat((component.maxX - component.minX + 1) * (component.maxY - component.minY + 1)))
                 let compactness = min(CGFloat(component.area) / bboxArea, 1)
-                let idealArea = max(CGFloat(minArea), CGFloat(lumas.count) * 0.08)
+                let idealArea = max(CGFloat(minArea), CGFloat(lumas.count) * 0.045)
                 let areaScore = 1 - min(abs(CGFloat(component.area) - idealArea) / idealArea, 1)
                 let darknessScore = 1 - min((component.lumaSum / CGFloat(component.area)) / 255, 1)
                 let distanceScore = pupilDistanceScore(
@@ -760,7 +773,13 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
                     width: width,
                     height: height
                 )
-                let score = darknessScore * 0.42 + areaScore * 0.22 + compactness * 0.16 + distanceScore * 0.20
+                let verticalScore = pupilVerticalScore(
+                    center: center,
+                    bounds: bounds,
+                    width: width,
+                    height: height
+                )
+                let score = darknessScore * 0.32 + distanceScore * 0.32 + areaScore * 0.16 + compactness * 0.12 + verticalScore * 0.08
 
                 if score > bestScore {
                     bestScore = score
@@ -769,7 +788,7 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
             }
         }
 
-        guard let bestCenter, bestScore >= 0.32 else {
+        guard let bestCenter, bestScore >= 0.28 else {
             return nil
         }
 
@@ -777,6 +796,16 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
             x: bestCenter.x / CGFloat(width),
             y: bestCenter.y / CGFloat(height)
         )
+    }
+
+    private func pointInExpandedEyeRegion(_ point: CGPoint, bounds: CGRect) -> Bool {
+        guard bounds.width > 0, bounds.height > 0 else {
+            return false
+        }
+
+        let nx = (point.x - bounds.midX) / max(bounds.width * 0.62, CGFloat.ulpOfOne)
+        let ny = (point.y - bounds.midY) / max(bounds.height * 0.86, CGFloat.ulpOfOne)
+        return nx * nx + ny * ny <= 1
     }
 
     private func floodDarkComponent(
@@ -847,6 +876,13 @@ private final class CameraController: NSObject, AVCaptureVideoDataOutputSampleBu
         } ?? fallbackCenter
         let distance = hypot(center.x - reference.x, center.y - reference.y)
         return 1 - min(distance / max(eyeWidth * 0.45, 1), 1)
+    }
+
+    private func pupilVerticalScore(center: CGPoint, bounds: CGRect, width: Int, height: Int) -> CGFloat {
+        let eyeHeight = max(bounds.height * CGFloat(height), 1)
+        let targetY = bounds.midY * CGFloat(height)
+        let distance = abs(center.y - targetY)
+        return 1 - min(distance / max(eyeHeight * 0.70, 1), 1)
     }
 
     private func percentile(_ values: [CGFloat], p: CGFloat) -> CGFloat {

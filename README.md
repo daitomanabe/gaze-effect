@@ -60,19 +60,28 @@ Source: [Library of Congress](https://www.loc.gov/pictures/item/2004664360/)
 
 ## Video Test
 
-This short test uses a local camera recording, samples it at 12 fps, applies the gaze correction frame by frame, and encodes both clips at 36 fps for roughly 3x playback. The README videos are downscaled to 480 x 270 and muted to keep the repository small.
+These short tests use local camera recordings, sample them at 12 fps, apply gaze correction frame by frame with the slower `inpaint` fill mode, and encode the clips at 36 fps for roughly 3x playback. The README videos are downscaled to 480 x 270 and muted to keep the repository small. The original local recordings are ignored and are not stored in the repository.
 
 | Original, 3x playback | Gaze Effect result, 3x playback |
 | --- | --- |
 | <video src="Assets/examples/video/gaze-effect-test-original-3x.mp4" controls muted playsinline width="360"></video> | <video src="Assets/examples/video/gaze-effect-test-corrected-3x.mp4" controls muted playsinline width="360"></video> |
+| <video src="Assets/examples/video/gaze-effect-test-2-original-3x.mp4" controls muted playsinline width="360"></video> | <video src="Assets/examples/video/gaze-effect-test-2-corrected-3x.mp4" controls muted playsinline width="360"></video> |
 
-Fallback links: [original 3x MP4](Assets/examples/video/gaze-effect-test-original-3x.mp4), [corrected 3x MP4](Assets/examples/video/gaze-effect-test-corrected-3x.mp4)
+For debugging accuracy, the second test also includes diagnostic renders. The first diagnostic clip paints the detected eye regions white. The second paints the same eye regions white and replaces the corrected pupil/iris target with a red circle. These clips make it easier to see that the current eye-region and pupil localization are still experimental and not yet production accurate.
+
+| White detected eye regions | White eye regions with red corrected pupil targets |
+| --- | --- |
+| <video src="Assets/examples/video/gaze-effect-test-2-white-eyes-3x.mp4" controls muted playsinline width="360"></video> | <video src="Assets/examples/video/gaze-effect-test-2-white-eyes-red-pupils-3x.mp4" controls muted playsinline width="360"></video> |
+
+Fallback links: [test 1 original 3x MP4](Assets/examples/video/gaze-effect-test-original-3x.mp4), [test 1 corrected 3x MP4](Assets/examples/video/gaze-effect-test-corrected-3x.mp4), [test 2 original 3x MP4](Assets/examples/video/gaze-effect-test-2-original-3x.mp4), [test 2 corrected 3x MP4](Assets/examples/video/gaze-effect-test-2-corrected-3x.mp4), [test 2 side-by-side comparison](Assets/examples/video/gaze-effect-test-2-comparison-3x.mp4), [test 2 white eyes diagnostic](Assets/examples/video/gaze-effect-test-2-white-eyes-3x.mp4), [test 2 red pupil diagnostic](Assets/examples/video/gaze-effect-test-2-white-eyes-red-pupils-3x.mp4), [test 2 diagnostics side-by-side](Assets/examples/video/gaze-effect-test-2-diagnostics-3x.mp4)
 
 ## Status
 
 This repository currently contains the public project description and the first testable Swift core for estimating eye-contact correction vectors. The production Camera Extension target, Metal/Core Image renderer, signing, and notarized installer are the next implementation steps.
 
 The included installer is a developer-preview package. It installs the command-line validation tool and project documentation, but it does not yet install a virtual camera device.
+
+Accuracy is still a work in progress. The current implementation is useful for verifying the Vision-only pipeline, but eye-region detection, pupil localization, and camera-facing target estimation still need improvement before the effect is reliable across different faces, gaze angles, lighting, and glasses.
 
 ## How It Works
 
@@ -91,14 +100,14 @@ flowchart LR
 ## Processing
 
 1. Capture frames from the selected physical camera.
-2. Run `VNDetectFaceLandmarksRequest` on a long-edge 640 px analysis frame, targeting up to 30 Hz while every camera frame is still displayed.
+2. Run `VNDetectFaceLandmarksRequest` on a downscaled analysis frame. The live preview targets up to 60 Hz with a 720 px long edge, while README frame processing uses 640 px inputs.
 3. Select the primary face by largest bounding box.
-4. Estimate the pupil with a dark-blob search inside each eye contour, using Vision pupil points only as a fallback.
-5. Reject correction when face confidence is low, landmarks are missing, or the eye aspect ratio indicates blinking.
-6. Estimate a per-eye correction vector toward a camera-facing target derived from the eye corners and eyelid bounds.
-7. Smooth measured pupil positions and correction vectors across frames.
-8. Render only a small feathered iris/pupil patch, leaving eyelids and surrounding skin stable.
-9. Pass through unstable frames without changing their timing.
+4. Estimate the white-of-eye region from each eye contour.
+5. Estimate the pupil/iris position with a dark-blob search inside that region, using Vision pupil points only as a fallback.
+6. Remove the original pupil/iris by blending it into surrounding sclera color. The preview app uses a realtime blend; offline frame processing can use an iterative inpaint-like fill.
+7. Estimate a per-eye camera-facing target from the eye corners and eyelid bounds, using a small vertical bias to avoid pushing pupils toward the eyelids.
+8. Paint the original pupil/iris texture back at the target position with a feathered mask.
+9. Do not temporally interpolate pupil positions or correction vectors; eye motion is fast, so each analyzed frame uses the current measurement directly.
 10. Emit the processed pixel buffer through `CMIOExtensionStream`.
 
 ## Apple APIs
@@ -125,6 +134,38 @@ The core package intentionally keeps Vision, AVFoundation, Metal, and Core Media
 
 ```bash
 swift run GazeEffectCoreCheck
+```
+
+Still image processing:
+
+```bash
+swift run GazeEffectImageTool -- \
+  --input source.jpg \
+  --output corrected.jpg \
+  --fill-mode realtime
+```
+
+Frame-sequence processing with slower inpaint-like filling:
+
+```bash
+swift run GazeEffectImageTool -- \
+  --input-dir frames \
+  --output-dir corrected-frames \
+  --fill-mode inpaint
+```
+
+Diagnostic frame-sequence rendering:
+
+```bash
+swift run GazeEffectImageTool -- \
+  --input-dir frames \
+  --output-dir white-eyes \
+  --render-mode white-eyes
+
+swift run GazeEffectImageTool -- \
+  --input-dir frames \
+  --output-dir white-eyes-red-pupils \
+  --render-mode white-eyes-red-pupils
 ```
 
 ## Build Local App

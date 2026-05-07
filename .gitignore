@@ -6,6 +6,7 @@ build/
 dist/
 artifacts/
 Assets/test-video.mp4
+!Assets/test-video-2.mp4
 Assets/examples/source/
 Assets/examples/metadata/
 
