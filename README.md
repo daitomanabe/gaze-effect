@@ -28,20 +28,11 @@ Source: [Wikimedia Commons, public domain](https://commons.wikimedia.org/wiki/Fi
 
 ## Video Test
 
-These short tests use local camera recordings, sample them at 12 fps, apply gaze correction frame by frame with the slower `inpaint` fill mode, and encode the clips at 36 fps for roughly 3x playback. The README videos are downscaled to 480 x 270 and muted to keep the repository small. `Assets/test-video-2.mp4` is included as a source clip for reproducible testing; other local source recordings remain ignored.
+This short test uses a local camera recording, samples it at 12 fps, applies gaze correction frame by frame with the slower `inpaint` fill mode, and encodes the clip at 36 fps for roughly 3x playback. `Assets/test-video-2.mp4` is included as a source clip for reproducible testing; other local source recordings remain ignored.
 
-| Original, 3x playback | Gaze Effect result, 3x playback |
-| --- | --- |
-| <video src="Assets/examples/video/gaze-effect-test-original-3x.mp4" controls muted playsinline width="360"></video> | <video src="Assets/examples/video/gaze-effect-test-corrected-3x.mp4" controls muted playsinline width="360"></video> |
-| <video src="Assets/examples/video/gaze-effect-test-2-original-3x.mp4" controls muted playsinline width="360"></video> | <video src="Assets/examples/video/gaze-effect-test-2-corrected-3x.mp4" controls muted playsinline width="360"></video> |
+<video src="Assets/examples/video/gaze-effect-test-2-quad-3x.mp4" controls muted playsinline width="720"></video>
 
 For debugging accuracy, the second test also includes diagnostic renders. The first diagnostic clip paints the detected eye regions white. The second paints the same eye regions white and replaces the corrected pupil/iris target with a red circle. These clips make it easier to see that the current eye-region and pupil localization are still experimental and not yet production accurate.
-
-| White detected eye regions | White eye regions with red corrected pupil targets |
-| --- | --- |
-| <video src="Assets/examples/video/gaze-effect-test-2-white-eyes-3x.mp4" controls muted playsinline width="360"></video> | <video src="Assets/examples/video/gaze-effect-test-2-white-eyes-red-pupils-3x.mp4" controls muted playsinline width="360"></video> |
-
-Fallback links: [test 1 original 3x MP4](Assets/examples/video/gaze-effect-test-original-3x.mp4), [test 1 corrected 3x MP4](Assets/examples/video/gaze-effect-test-corrected-3x.mp4), [test 2 original 3x MP4](Assets/examples/video/gaze-effect-test-2-original-3x.mp4), [test 2 corrected 3x MP4](Assets/examples/video/gaze-effect-test-2-corrected-3x.mp4), [test 2 side-by-side comparison](Assets/examples/video/gaze-effect-test-2-comparison-3x.mp4), [test 2 white eyes diagnostic](Assets/examples/video/gaze-effect-test-2-white-eyes-3x.mp4), [test 2 red pupil diagnostic](Assets/examples/video/gaze-effect-test-2-white-eyes-red-pupils-3x.mp4), [test 2 diagnostics side-by-side](Assets/examples/video/gaze-effect-test-2-diagnostics-3x.mp4)
 
 ## Status
 
