@@ -14,6 +14,8 @@ private struct Options {
     var before: String?
     var metadata: String?
     var metadataDir: String?
+    var landmarks: String?
+    var landmarksDir: String?
     var maxWidth: Int = 1000
     var strength: CGFloat = 1.2
     var fillMode: EyeFillMode = .realtime
@@ -31,6 +33,18 @@ private struct EyeRenderData {
     var contour: [CGPoint]
     var sourcePupil: CGPoint
     var targetPupil: CGPoint
+}
+
+private struct ExternalEyeLandmarks {
+    var contour: [CGPoint]
+    var pupil: CGPoint
+}
+
+private struct ExternalFrameLandmarks {
+    var faceBounds: CGRect
+    var confidence: CGFloat
+    var leftEye: ExternalEyeLandmarks
+    var rightEye: ExternalEyeLandmarks
 }
 
 private enum EyeFillMode: String {
@@ -57,6 +71,7 @@ private enum ToolError: LocalizedError {
     case noFace
     case noLandmarks
     case cannotListDirectory(String)
+    case cannotReadLandmarks(String)
     case cannotWrite(String)
 
     var errorDescription: String? {
@@ -73,6 +88,8 @@ private enum ToolError: LocalizedError {
             return "No usable eye landmarks detected"
         case .cannotListDirectory(let path):
             return "Could not list directory: \(path)"
+        case .cannotReadLandmarks(let path):
+            return "Could not read landmarks: \(path)"
         case .cannotWrite(let path):
             return "Could not write image: \(path)"
         }
@@ -100,6 +117,10 @@ private func parseOptions() throws -> Options {
             options.metadata = args.removeFirst()
         case "--metadata-dir":
             options.metadataDir = args.removeFirst()
+        case "--landmarks":
+            options.landmarks = args.removeFirst()
+        case "--landmarks-dir":
+            options.landmarksDir = args.removeFirst()
         case "--max-width":
             options.maxWidth = Int(args.removeFirst()) ?? options.maxWidth
         case "--strength":
@@ -145,8 +166,8 @@ private func parseOptions() throws -> Options {
 private func printUsage() {
     print("""
     Usage:
-      GazeEffectImageTool --input source.jpg --output after.jpg [--before before.jpg] [--metadata data.json] [--max-width 1000] [--strength 1.2] [--fill-mode realtime|inpaint] [--render-mode effect|white-eyes|white-eyes-red-pupils] [--verbose]
-      GazeEffectImageTool --input-dir frames --output-dir corrected [--metadata-dir metadata] [--max-width 1000] [--strength 1.2] [--fill-mode realtime|inpaint] [--render-mode effect|white-eyes|white-eyes-red-pupils] [--verbose]
+      GazeEffectImageTool --input source.jpg --output after.jpg [--before before.jpg] [--metadata data.json] [--landmarks landmarks.json] [--max-width 1000] [--strength 1.2] [--fill-mode realtime|inpaint] [--render-mode effect|white-eyes|white-eyes-red-pupils] [--verbose]
+      GazeEffectImageTool --input-dir frames --output-dir corrected [--metadata-dir metadata] [--landmarks-dir landmarks] [--max-width 1000] [--strength 1.2] [--fill-mode realtime|inpaint] [--render-mode effect|white-eyes|white-eyes-red-pupils] [--verbose]
     """)
 }
 
@@ -259,8 +280,17 @@ private func analyze(
     image: CGImage,
     rgba: RGBAImage,
     estimator: inout EyeContactEstimator,
+    externalLandmarks: ExternalFrameLandmarks?,
     verbose: Bool
 ) throws -> (EyeRenderData, EyeRenderData, CGRect) {
+    if let externalLandmarks {
+        return try analyzeExternalLandmarks(
+            externalLandmarks,
+            estimator: &estimator,
+            verbose: verbose
+        )
+    }
+
     var requestError: Error?
     var observations: [VNFaceObservation] = []
 
@@ -318,6 +348,45 @@ private func analyze(
         EyeRenderData(contour: leftContour, sourcePupil: leftPupil, targetPupil: leftCorrection.targetPupil),
         EyeRenderData(contour: rightContour, sourcePupil: rightPupil, targetPupil: rightCorrection.targetPupil),
         topLeftRect(face.boundingBox)
+    )
+}
+
+private func analyzeExternalLandmarks(
+    _ landmarks: ExternalFrameLandmarks,
+    estimator: inout EyeContactEstimator,
+    verbose: Bool
+) throws -> (EyeRenderData, EyeRenderData, CGRect) {
+    let result = estimator.estimate(
+        from: FaceLandmarks(
+            leftEye: EyeLandmarks(contour: landmarks.leftEye.contour, pupil: landmarks.leftEye.pupil),
+            rightEye: EyeLandmarks(contour: landmarks.rightEye.contour, pupil: landmarks.rightEye.pupil),
+            faceBounds: landmarks.faceBounds,
+            confidence: landmarks.confidence
+        )
+    )
+
+    guard let leftCorrection = result.left, let rightCorrection = result.right else {
+        throw ToolError.noLandmarks
+    }
+
+    if verbose {
+        print("external face confidence: \(landmarks.confidence)")
+        print("left delta: \(leftCorrection.delta.dx), \(leftCorrection.delta.dy)")
+        print("right delta: \(rightCorrection.delta.dx), \(rightCorrection.delta.dy)")
+    }
+
+    return (
+        EyeRenderData(
+            contour: landmarks.leftEye.contour,
+            sourcePupil: landmarks.leftEye.pupil,
+            targetPupil: leftCorrection.targetPupil
+        ),
+        EyeRenderData(
+            contour: landmarks.rightEye.contour,
+            sourcePupil: landmarks.rightEye.pupil,
+            targetPupil: rightCorrection.targetPupil
+        ),
+        landmarks.faceBounds
     )
 }
 
@@ -1221,7 +1290,14 @@ private func processSingle(_ options: Options) throws {
     let cgImage = try resizeIfNeeded(loadCGImage(path: input), maxWidth: options.maxWidth)
     let rgba = try rgbaImage(from: cgImage)
     var estimator = makeEstimator(smoothingAlpha: 1.0)
-    let (left, right, faceBounds) = try analyze(image: cgImage, rgba: rgba, estimator: &estimator, verbose: options.verbose)
+    let externalLandmarks = try options.landmarks.map { try loadExternalLandmarks(path: $0) }
+    let (left, right, faceBounds) = try analyze(
+        image: cgImage,
+        rgba: rgba,
+        estimator: &estimator,
+        externalLandmarks: externalLandmarks,
+        verbose: options.verbose
+    )
     let corrected = renderEffect(
         source: rgba,
         left: left,
@@ -1264,7 +1340,14 @@ private func processSequence(_ options: Options) throws {
         let rgba = try rgbaImage(from: cgImage)
 
         do {
-            let (left, right, faceBounds) = try analyze(image: cgImage, rgba: rgba, estimator: &estimator, verbose: false)
+            let externalLandmarks = try externalLandmarksForFrame(frameURL, landmarksDir: options.landmarksDir)
+            let (left, right, faceBounds) = try analyze(
+                image: cgImage,
+                rgba: rgba,
+                estimator: &estimator,
+                externalLandmarks: externalLandmarks,
+                verbose: false
+            )
             let corrected = renderEffect(
                 source: rgba,
                 left: left,
@@ -1311,6 +1394,88 @@ private func listFrameURLs(in url: URL) throws -> [URL] {
     return urls
         .filter { allowed.contains($0.pathExtension.lowercased()) }
         .sorted { $0.lastPathComponent < $1.lastPathComponent }
+}
+
+private func externalLandmarksForFrame(_ frameURL: URL, landmarksDir: String?) throws -> ExternalFrameLandmarks? {
+    guard let landmarksDir else {
+        return nil
+    }
+
+    let landmarksURL = URL(fileURLWithPath: landmarksDir)
+        .appendingPathComponent(frameURL.deletingPathExtension().lastPathComponent)
+        .appendingPathExtension("json")
+    return try loadExternalLandmarks(path: landmarksURL.path)
+}
+
+private func loadExternalLandmarks(path: String) throws -> ExternalFrameLandmarks {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        throw ToolError.cannotReadLandmarks(path)
+    }
+
+    guard let leftContour = pointList(object["leftContour"]),
+          let rightContour = pointList(object["rightContour"]),
+          let leftPupil = pointValue(object["leftPupil"] ?? object["leftSourcePupil"]),
+          let rightPupil = pointValue(object["rightPupil"] ?? object["rightSourcePupil"]) else {
+        throw ToolError.cannotReadLandmarks(path)
+    }
+
+    let faceBounds = rectValue(object["faceBounds"])
+        ?? normalizedBounds(leftContour + rightContour).insetBy(dx: -0.08, dy: -0.12)
+    let confidence = CGFloat(numberValue(object["confidence"]) ?? 0.95)
+
+    return ExternalFrameLandmarks(
+        faceBounds: faceBounds,
+        confidence: confidence,
+        leftEye: ExternalEyeLandmarks(contour: leftContour, pupil: leftPupil),
+        rightEye: ExternalEyeLandmarks(contour: rightContour, pupil: rightPupil)
+    )
+}
+
+private func pointList(_ value: Any?) -> [CGPoint]? {
+    guard let rawPoints = value as? [Any] else {
+        return nil
+    }
+
+    let points = rawPoints.compactMap { pointValue($0) }
+    return points.count == rawPoints.count && !points.isEmpty ? points : nil
+}
+
+private func pointValue(_ value: Any?) -> CGPoint? {
+    guard let raw = value as? [Any],
+          raw.count >= 2,
+          let x = numberValue(raw[0]),
+          let y = numberValue(raw[1]) else {
+        return nil
+    }
+    return CGPoint(x: CGFloat(x), y: CGFloat(y))
+}
+
+private func rectValue(_ value: Any?) -> CGRect? {
+    guard let raw = value as? [Any],
+          raw.count >= 4,
+          let x = numberValue(raw[0]),
+          let y = numberValue(raw[1]),
+          let width = numberValue(raw[2]),
+          let height = numberValue(raw[3]) else {
+        return nil
+    }
+    return CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(width), height: CGFloat(height))
+}
+
+private func numberValue(_ value: Any?) -> Double? {
+    switch value {
+    case let value as Double:
+        return value
+    case let value as Float:
+        return Double(value)
+    case let value as Int:
+        return Double(value)
+    case let value as NSNumber:
+        return value.doubleValue
+    default:
+        return nil
+    }
 }
 
 private func writeMetadata(faceBounds: CGRect, left: EyeRenderData, right: EyeRenderData, to path: String) throws {

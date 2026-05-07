@@ -59,15 +59,24 @@ flowchart LR
 ## Processing
 
 1. Capture frames from the selected physical camera.
-2. Run `VNDetectFaceLandmarksRequest` on a downscaled analysis frame. The live preview targets up to 60 Hz with a 720 px long edge, while README frame processing uses 640 px inputs.
+2. Detect eye geometry with either the built-in Vision fallback or MediaPipe Face Landmarker sidecars.
 3. Select the primary face by largest bounding box.
 4. Estimate the white-of-eye region from each eye contour.
-5. Estimate the pupil/iris position with a dark-blob search inside that region, using Vision pupil points only as a fallback.
+5. Estimate the pupil/iris position from MediaPipe iris landmarks, or with a dark-blob search inside that region when using the offline refinement mode.
 6. Remove the original pupil/iris by blending it into surrounding sclera color. The preview app uses a realtime blend; offline frame processing can use an iterative inpaint-like fill.
 7. Estimate a per-eye camera-facing target from the eye corners and eyelid bounds, using a small vertical bias to avoid pushing pupils toward the eyelids.
 8. Paint the original pupil/iris texture back at the target position with a feathered mask.
 9. Do not temporally interpolate pupil positions or correction vectors; eye motion is fast, so each analyzed frame uses the current measurement directly.
 10. Emit the processed pixel buffer through `CMIOExtensionStream`.
+
+## Detection Pipelines
+
+Gaze Effect now has two detector paths that feed the same renderer:
+
+- `realtime`: lightweight MediaPipe Face Landmarker / iris landmarks. This avoids Vision's coarse eye contour as the primary source and is designed for the future Camera Extension path. The current Swift preview keeps Vision as a fallback until MediaPipe is integrated natively into the app target.
+- `offline`: MediaPipe landmarks plus local dark-blob pupil refinement, then the slower `inpaint` fill mode in `GazeEffectImageTool`. This path is for README/video generation and accuracy debugging, where latency is less important than quality.
+
+Both paths write or consume the same JSON sidecar shape: `leftContour`, `rightContour`, `leftPupil`, `rightPupil`, and `faceBounds`. That keeps the renderer independent of the detector implementation.
 
 ## Apple APIs
 
@@ -85,6 +94,7 @@ Apple's Camera Extension workflow is documented in [Creating a camera extension 
 - `Sources/GazeEffectCore/GazeEffectCore.swift`: frame-independent eye-contact estimation logic.
 - `Sources/GazeEffectCoreCheck/main.swift`: geometry and safety checks that run without Xcode.
 - `Sources/GazeEffectImageTool/main.swift`: still-image and frame-sequence correction tool used to generate the README examples.
+- `scripts/mediapipe-eye-landmarks.py`: MediaPipe Face Landmarker / iris sidecar generator for realtime and offline detector modes.
 - `scripts/build-installer.sh`: builds an unsigned developer-preview macOS installer package.
 
 The core package intentionally keeps Vision, AVFoundation, Metal, and Core Media I/O out of the library target. This keeps the correction logic testable and allows the same estimator to run inside a Camera Extension, preview app, or offline renderer.
@@ -110,6 +120,36 @@ Frame-sequence processing with slower inpaint-like filling:
 swift run GazeEffectImageTool -- \
   --input-dir frames \
   --output-dir corrected-frames \
+  --fill-mode inpaint
+```
+
+MediaPipe realtime sidecars:
+
+```bash
+scripts/mediapipe-eye-landmarks.py \
+  --input-dir frames \
+  --output-dir landmarks \
+  --mode realtime
+
+swift run GazeEffectImageTool -- \
+  --input-dir frames \
+  --output-dir corrected-frames \
+  --landmarks-dir landmarks \
+  --fill-mode realtime
+```
+
+Offline quality pass:
+
+```bash
+scripts/mediapipe-eye-landmarks.py \
+  --input-dir frames \
+  --output-dir landmarks-offline \
+  --mode offline
+
+swift run GazeEffectImageTool -- \
+  --input-dir frames \
+  --output-dir corrected-frames \
+  --landmarks-dir landmarks-offline \
   --fill-mode inpaint
 ```
 
