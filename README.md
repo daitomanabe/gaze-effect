@@ -36,7 +36,7 @@ For debugging accuracy, the second test also includes diagnostic renders. The fi
 
 ## Status
 
-This repository currently contains the public project description and the first testable Swift core for estimating eye-contact correction vectors. The production Camera Extension target, Metal/Core Image renderer, signing, and notarized installer are the next implementation steps.
+This repository currently contains the public project description, the first testable Swift core for estimating eye-contact correction vectors, a local camera test app, and an offline rendering test app. The production Camera Extension target, Metal/Core Image renderer, signing, and notarized installer are the next implementation steps.
 
 The included installer is a developer-preview package. It installs the command-line validation tool and project documentation, but it does not yet install a virtual camera device.
 
@@ -93,17 +93,101 @@ Apple's Camera Extension workflow is documented in [Creating a camera extension 
 
 - `Sources/GazeEffectCore/GazeEffectCore.swift`: frame-independent eye-contact estimation logic.
 - `Sources/GazeEffectCoreCheck/main.swift`: geometry and safety checks that run without Xcode.
-- `Sources/GazeEffectImageTool/main.swift`: still-image and frame-sequence correction tool used to generate the README examples.
+- `Sources/GazeEffectPreviewApp/main.swift`: local camera test app with Effect / Debug preview modes.
+- `Sources/GazeEffectImageTool/main.swift`: still-image and frame-sequence correction tool used by the offline renderer and README examples.
+- `Sources/GazeEffectOfflineRendererApp/main.swift`: GUI wrapper for offline video rendering and diagnostic output.
 - `scripts/mediapipe-eye-landmarks.py`: MediaPipe Face Landmarker / iris sidecar generator for realtime and offline detector modes.
+- `scripts/build-camera-test-app.sh`: builds the local camera test app.
+- `scripts/build-offline-renderer-app.sh`: builds the offline video renderer app.
+- `scripts/build-test-apps.sh`: builds both local test apps.
 - `scripts/build-installer.sh`: builds an unsigned developer-preview macOS installer package.
 
 The core package intentionally keeps Vision, AVFoundation, Metal, and Core Media I/O out of the library target. This keeps the correction logic testable and allows the same estimator to run inside a Camera Extension, preview app, or offline renderer.
 
 ## Build
 
+Requirements:
+
+- macOS 13 or later.
+- Xcode command line tools: `xcode-select --install`.
+- `ffmpeg` for offline video rendering. For example: `brew install ffmpeg`.
+- Python packages for MediaPipe sidecar generation: `python3 -m pip install mediapipe opencv-python numpy`.
+
 ```bash
 swift run GazeEffectCoreCheck
 ```
+
+Build both local test apps:
+
+```bash
+./scripts/build-test-apps.sh
+```
+
+This writes:
+
+```text
+build/GazeEffectCameraTest.app
+build/GazeEffectOfflineRenderer.app
+```
+
+These app bundles are ad-hoc signed when no local Apple Development identity is available. They are intended for local testing, not notarized public distribution.
+
+### Camera Test App
+
+Build and launch:
+
+```bash
+./scripts/build-camera-test-app.sh
+open build/GazeEffectCameraTest.app
+```
+
+The camera test app opens the physical camera and runs the current realtime preview pipeline. Use the segmented control in the top-right corner:
+
+- `Effect`: previews the eye-contact correction on the live camera image.
+- `Debug`: shows face bounds, eye contours, detected pupils, target pupils, and correction vectors.
+
+The camera test app is not a virtual camera device. It is a local validation app for tuning detection and rendering before the Core Media I/O Camera Extension target is completed.
+
+### Offline Rendering App
+
+Build and launch:
+
+```bash
+./scripts/build-offline-renderer-app.sh
+open build/GazeEffectOfflineRenderer.app
+```
+
+Default input is:
+
+```text
+Assets/test-video-2.mp4
+```
+
+Default output is:
+
+```text
+build/offline-renderer/gaze-effect-offline-corrected.mp4
+```
+
+The offline renderer runs this sequence:
+
+1. Extract frames from the input movie at 12 fps and resize to the selected max width.
+2. Generate MediaPipe eye/iris sidecar JSON files.
+3. Run `GazeEffectImageTool` on the frame sequence.
+4. Encode the corrected frames at 36 fps for roughly 3x playback.
+
+Detector modes:
+
+- `Realtime`: MediaPipe iris landmarks with realtime sclera fill.
+- `Offline`: MediaPipe iris landmarks, dark-blob refinement, and slower inpaint-like sclera fill.
+
+Render modes:
+
+- `Effect`: corrected gaze render.
+- `White eyes`: fills the detected eye regions for mask debugging.
+- `White eyes + red pupils`: fills eye regions and draws the corrected pupil target as red circles.
+
+If the first MediaPipe run cannot find `Assets/models/face_landmarker.task`, the script downloads it automatically. The model file is ignored by git.
 
 Still image processing:
 
@@ -167,21 +251,14 @@ swift run GazeEffectImageTool -- \
   --render-mode white-eyes-red-pupils
 ```
 
-## Build Local App
+## Legacy Local App Command
 
-For a local machine build without an installer:
+For compatibility, this command still builds the camera test app:
 
 ```bash
 ./scripts/build-app.sh
-open build/GazeEffectPreview.app
+open build/GazeEffectCameraTest.app
 ```
-
-The preview app opens the camera, runs Vision face landmark analysis, and overlays the estimated eye-contact correction vectors. It is a local preview app, not a CMIO virtual camera device.
-
-Preview modes:
-
-- `Effect`: shifts a small elliptical eye region by the estimated correction vector, moving the dark pupil/iris area toward camera-facing eye contact.
-- `Debug`: shows face bounds, eye contours, source pupils, target pupils, and correction vectors without modifying the video image.
 
 ## Build Installer
 

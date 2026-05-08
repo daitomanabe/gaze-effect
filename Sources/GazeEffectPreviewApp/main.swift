@@ -54,7 +54,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "Gaze Effect Preview"
+        window.title = "Gaze Effect Camera Test"
         window.contentMinSize = NSSize(width: 960, height: 540)
         window.center()
         window.contentView = content

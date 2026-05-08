@@ -23,6 +23,10 @@ let package = Package(
         .executable(
             name: "GazeEffectImageTool",
             targets: ["GazeEffectImageTool"]
+        ),
+        .executable(
+            name: "GazeEffectOfflineRendererApp",
+            targets: ["GazeEffectOfflineRendererApp"]
         )
     ],
     targets: [
@@ -43,6 +47,12 @@ let package = Package(
         .executableTarget(
             name: "GazeEffectImageTool",
             dependencies: ["GazeEffectCore"],
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
+        ),
+        .executableTarget(
+            name: "GazeEffectOfflineRendererApp",
             swiftSettings: [
                 .swiftLanguageMode(.v5)
             ]
