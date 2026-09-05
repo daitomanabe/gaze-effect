@@ -1,6 +1,6 @@
 # Animation Video Analysis
 
-- Input: `Assets/examples/video/steady-gaze/gaze-effect-steady-final.mp4`
+- Input: `demo/steady-gaze.mp4`
 - Mode/profile: `light` / `generic`
 - Overall: **WARN**
 - Technical integrity: **PASS**

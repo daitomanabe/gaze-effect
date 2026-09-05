@@ -2,8 +2,8 @@
 
 2026-09-05。「右側の動画をもっとずっとまっすぐ見ている状態にする」という調整。
 
-- [最新の補正動画](../Assets/examples/video/steady-gaze/gaze-effect-steady-final.mp4)
-- [左: 元映像／右: 新しい補正、下段: 目元拡大](../Assets/examples/video/steady-gaze/gaze-effect-steady-final-comparison.mp4)
+- [最新の補正動画](../demo/steady-gaze.mp4)
+- [左: 元映像／右: 新しい補正、下段: 目元拡大](../demo/steady-gaze-comparison.mp4)
 - [解析表示](../Assets/examples/video/steady-gaze/gaze-effect-steady-final-debug.mp4)
 - [元映像・前版・新しい補正の代表時点](../Assets/examples/video/steady-gaze/final-eye-review.jpg)
 

@@ -4,7 +4,7 @@ Generated: 2026-09-05T00:19:24.822616+00:00
 Summary: 3 PASS / 0 WARN / 0 FAIL / 0 ERROR
 Preset: `fast`; budget: 128px / 48 frames
 
-## Assets/examples/video/steady-gaze/gaze-effect-steady-final.mp4
+## demo/steady-gaze.mp4
 
 - Status: `PASS`
 - Low-level elapsed: 0.500s
@@ -24,7 +24,7 @@ Preset: `fast`; budget: 128px / 48 frames
   - complexity: mean_edge_density=0.2527, mean_luma_entropy=4.2814
   - lighting: mean_coarse_dynamic_range=138.4583, mean_coarse_gradient=16.2595, mean_coarse_gradient_coverage=0.8095, mean_coarse_luma_bins=24.0000, mean_quantized_color_bins=167.1250
 
-## Assets/examples/video/steady-gaze/gaze-effect-steady-final-comparison.mp4
+## demo/steady-gaze-comparison.mp4
 
 - Status: `PASS`
 - Low-level elapsed: 0.609s

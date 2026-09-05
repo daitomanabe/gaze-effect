@@ -1,6 +1,6 @@
 # 最新動画の検証記録
 
-`build/steady-gaze` の検証結果を公開用に保存したもの。レポートのローカル絶対パスをリポジトリ相対パスへ置換し、公開した動画の参照先を `Assets/examples/video/steady-gaze` へ変更した。Markdownの行末空白を除き、計測値・QAの判定は変更していない。
+`build/steady-gaze` の検証結果を公開用に保存したもの。レポートのローカル絶対パスをリポジトリ相対パスへ置換し、公開した動画の参照先を `demo` と `Assets/examples/video/steady-gaze` の現在の保存先へ変更した。Markdownの行末空白を除き、計測値・QAの判定は変更していない。
 
 `camera-replay-summary.json` は元レポートからフレーム数と全361件の処理時間を保持した要約で、元レポートのSHA-256も記録する。フレームごとの顔・目の解析記録とPNG中間画像はローカルの `build` に保存している。その他のレポート内の `build/...` もローカル生成物の位置を示す。
 

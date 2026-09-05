@@ -1,17 +1,20 @@
 # Gaze Effect
 
-![Gaze Effect thumbnail](Assets/thumbnail/gaze-effect-thumbnail.jpg)
+カメラ映像の目元を解析し、視線をカメラ方向へ近づけるmacOS向けのローカルエフェクトです。
 
-Gaze Effect は、カメラ映像の目元を解析し、視線をカメラ方向へ近づける macOS 向けのローカルエフェクトです。バージョン0.2では、ライブプレビューと動画・静止画の書き出しが同じ解析・合成処理を使います。
+## 最新デモ：視線の揺れを抑えた版
 
-通常は全自動で動作します。必要な場合だけ、レンズを見て個人補正を作成できます。頭部姿勢・眼球位置は近似モデルによる推定です。大きな視線変更、強い眼鏡反射、見えていない虹彩・白目の補完には限界があり、実測した視線角度の正解を保証する製品ではありません。
+[![比較動画のプレビュー：左が元映像、右が補正後、下段が目元の拡大](demo/steady-gaze-preview.jpg)](demo/steady-gaze-comparison.mp4)
 
-[精度改善の戦略](docs/accuracy-strategy.md) / [初期実装の検証](docs/implementation-status.md) / [正面視線の安定化・最新動画](docs/steady-gaze.md)
+**[比較動画を見る](demo/steady-gaze-comparison.mp4)** · **[補正後の動画を見る](demo/steady-gaze.mp4)** · [デモファイル一覧](demo/)
 
-[最新の比較動画を再生・ダウンロード](Assets/examples/video/steady-gaze/gaze-effect-steady-final-comparison.mp4) / [補正動画](Assets/examples/video/steady-gaze/gaze-effect-steady-final.mp4)
+左が元映像、右が補正後、下段が目元の拡大です。15秒・等速・個人キャリブレーションなし。音声は元動画からそのままコピーしています。
 
-左が元映像、右が補正後、下段が目元の拡大です。この素材では前版より黒目の左右の位置変動が約83%減少しました。画像上の位置の計測で、視線角度の正解値との比較ではありません。音声は元動画からそのままコピーしています。
+この素材では前版より黒目の左右の位置変動が約83%減少しました。画像上の位置の計測で、視線角度の正解値との比較ではありません。[変更内容・計測結果](docs/steady-gaze.md)
 
+バージョン0.2では、ライブプレビューと動画・静止画の書き出しが同じ解析・合成処理を使います。通常は全自動で動作し、必要な場合だけレンズを見て個人補正を作成できます。頭部姿勢・眼球位置は近似モデルによる推定です。大きな視線変更、強い眼鏡反射、見えていない虹彩・白目の補完には限界があります。
+
+[精度改善の戦略](docs/accuracy-strategy.md) / [初期実装の検証](docs/implementation-status.md)
 
 ## Processing
 
