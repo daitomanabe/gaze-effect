@@ -8,6 +8,7 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
+        .executable(name: "GazeEffectPipelineCheck", targets: ["GazeEffectPipelineCheck"]),
         .library(
             name: "GazeEffectCore",
             targets: ["GazeEffectCore"]
@@ -30,6 +31,8 @@ let package = Package(
         )
     ],
     targets: [
+        .target(name: "GazeEffectBridge", swiftSettings: [.swiftLanguageMode(.v5)]),
+        .executableTarget(name: "GazeEffectPipelineCheck", dependencies: ["GazeEffectBridge"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .target(
             name: "GazeEffectCore"
         ),
@@ -39,7 +42,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "GazeEffectPreviewApp",
-            dependencies: ["GazeEffectCore"],
+            dependencies: ["GazeEffectCore", "GazeEffectBridge"],
             swiftSettings: [
                 .swiftLanguageMode(.v5)
             ]

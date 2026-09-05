@@ -98,7 +98,7 @@ private enum ToolError: LocalizedError {
 
 private func parseOptions() throws -> Options {
     var options = Options()
-    var args = Array(CommandLine.arguments.dropFirst())
+    var args = Array(CommandLine.arguments.dropFirst()).filter { $0 != "--legacy" && $0 != "--" }
 
     while !args.isEmpty {
         let arg = args.removeFirst()
@@ -1269,6 +1269,30 @@ private func smoothstep(edge0: CGFloat, edge1: CGFloat, x: CGFloat) -> CGFloat {
 private extension CGRect {
     var area: CGFloat {
         width * height
+    }
+}
+
+// The previous renderer is retained only for reproducible baseline comparisons.
+if !CommandLine.arguments.contains("--legacy") {
+    let root = FileManager.default.currentDirectoryPath
+    let bundled = Bundle.main.resourceURL?.appendingPathComponent("scripts/gaze-images.py")
+    let script = bundled.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil } ?? URL(fileURLWithPath: root).appendingPathComponent("scripts/gaze-images.py")
+    let localPython = URL(fileURLWithPath: root).appendingPathComponent(".venv/bin/python3").path
+    let python = ProcessInfo.processInfo.environment["GAZE_EFFECT_PYTHON"] ?? (FileManager.default.isExecutableFile(atPath: localPython) ? localPython : "/opt/homebrew/bin/python3")
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: python)
+    process.arguments = ["-B", script.path] + CommandLine.arguments.dropFirst().filter { $0 != "--" }
+    if !CommandLine.arguments.contains("--models"), let resources = Bundle.main.resourceURL,
+       FileManager.default.fileExists(atPath: resources.appendingPathComponent("models/face_landmarker.task").path) {
+        process.arguments! += ["--models", resources.appendingPathComponent("models").path]
+    }
+    do {
+        try process.run()
+        process.waitUntilExit()
+        exit(process.terminationStatus)
+    } catch {
+        fputs("Gaze image worker failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
     }
 }
 

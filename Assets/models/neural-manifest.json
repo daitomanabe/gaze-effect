@@ -1,0 +1,22 @@
+{
+  "upstream": "https://github.com/chihfanhsu/gaze_correction",
+  "conversion_repository": "https://github.com/KypMon/coreml-eye-contact",
+  "revision": "e9d5ae505c62f87851756e966d3e8d1d39b1bcfe",
+  "files": {
+    "gaze_L.onnx": {
+      "url": "https://raw.githubusercontent.com/KypMon/coreml-eye-contact/e9d5ae505c62f87851756e966d3e8d1d39b1bcfe/neural/gaze_L.onnx",
+      "sha256": "f39ee44e76c4efbd0bace9295baab7a8c823ac18a4ff7f5b725ddbfbf2bd50e1",
+      "bytes": 1061688
+    },
+    "gaze_R.onnx": {
+      "url": "https://raw.githubusercontent.com/KypMon/coreml-eye-contact/e9d5ae505c62f87851756e966d3e8d1d39b1bcfe/neural/gaze_R.onnx",
+      "sha256": "f64f721e805c8bcbf2d0b96b889fe957f480e5e328014a9ee6e93d68f0aa2d47",
+      "bytes": 1061732
+    },
+    "face_landmarker.task": {
+      "url": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+      "bytes": 3758596
+    }
+  }
+}

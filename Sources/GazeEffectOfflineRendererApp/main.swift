@@ -40,6 +40,7 @@ private struct RenderSettings {
     var renderMode: OfflineRenderMode
     var strength: Double
     var maxWidth: Int
+    var calibrationPath: String
 }
 
 private enum OfflineRendererError: LocalizedError {
@@ -76,13 +77,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentMinSize = NSSize(width: 780, height: 560)
         window.center()
         window.contentView = content
-        window.makeKeyAndOrderFront(nil)
+        window.orderFront(nil)
 
         self.window = window
         self.rendererView = content
 
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        let args = CommandLine.arguments
+        if let input = args.firstIndex(of: "--render-input"), input+1 < args.count,
+           let output = args.firstIndex(of: "--render-output"), output+1 < args.count,
+           let report = args.firstIndex(of: "--report"), report+1 < args.count {
+            content.renderFromArguments(input: args[input+1], output: args[output+1], report: args[report+1])
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -93,8 +99,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 private final class OfflineRendererView: NSView {
     private let inputField = NSTextField()
     private let outputField = NSTextField()
-    private let detectorControl = NSSegmentedControl(labels: ["Realtime", "Offline"], trackingMode: .selectOne, target: nil, action: nil)
+    private let detectorControl = NSSegmentedControl(labels: ["Local warp", "Automatic"], trackingMode: .selectOne, target: nil, action: nil)
     private let renderModePopup = NSPopUpButton()
+    private let calibrationField = NSTextField()
+    private let chooseCalibrationButton = NSButton(title: "Choose profile", target: nil, action: nil)
     private let strengthField = NSTextField()
     private let maxWidthField = NSTextField()
     private let runButton = NSButton(title: "Render", target: nil, action: nil)
@@ -112,6 +120,35 @@ private final class OfflineRendererView: NSView {
             outputField.isEnabled = !isRunning
             strengthField.isEnabled = !isRunning
             maxWidthField.isEnabled = !isRunning
+            calibrationField.isEnabled = !isRunning
+            chooseCalibrationButton.isEnabled = !isRunning
+        }
+    }
+    private var reportURL: URL?
+
+    func renderFromArguments(input: String, output: String, report: String) {
+        inputField.stringValue = input
+        outputField.stringValue = output
+        reportURL = URL(fileURLWithPath: report)
+        startRender()
+    }
+
+    private func finishArgumentRun(error: String?) {
+        guard let reportURL else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            do {
+                try FileManager.default.createDirectory(at: reportURL, withIntermediateDirectories: true)
+                let result: [String: Any] = ["success": error == nil, "error": error as Any? ?? NSNull(),
+                                           "input": self.inputField.stringValue, "output": self.outputField.stringValue]
+                try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted]).write(to: reportURL.appendingPathComponent("result.json"))
+                try self.logView.string.write(to: reportURL.appendingPathComponent("render.log"), atomically: true, encoding: .utf8)
+                if let bitmap = self.bitmapImageRepForCachingDisplay(in: self.bounds) {
+                    self.cacheDisplay(in: self.bounds, to: bitmap)
+                    try bitmap.representation(using: .png, properties: [:])?.write(to: reportURL.appendingPathComponent("preview.png"))
+                }
+            } catch { self.appendLog("Report error: \(error.localizedDescription)\n") }
+            NSApp.terminate(nil)
         }
     }
 
@@ -151,7 +188,7 @@ private final class OfflineRendererView: NSView {
         viewWithTag(1002)?.frame = NSRect(x: bounds.width - inset - buttonWidth, y: y, width: buttonWidth, height: rowHeight)
 
         y += rowHeight + gap
-        layoutLabel("Detector", x: inset, y: y, width: labelWidth)
+        layoutLabel("Method", x: inset, y: y, width: labelWidth)
         detectorControl.frame = NSRect(x: inset + labelWidth, y: y, width: 220, height: rowHeight)
         layoutLabel("Render", x: inset + labelWidth + 246, y: y, width: 68)
         renderModePopup.frame = NSRect(x: inset + labelWidth + 314, y: y, width: 220, height: rowHeight)
@@ -164,6 +201,9 @@ private final class OfflineRendererView: NSView {
         runButton.frame = NSRect(x: bounds.width - inset - 210, y: y, width: 96, height: rowHeight)
         openOutputButton.frame = NSRect(x: bounds.width - inset - 106, y: y, width: 106, height: rowHeight)
 
+        y += rowHeight + 12
+        calibrationField.frame = NSRect(x: inset, y: y, width: contentWidth - 150, height: rowHeight)
+        chooseCalibrationButton.frame = NSRect(x: bounds.width - inset - 138, y: y, width: 138, height: rowHeight)
         y += rowHeight + 18
         logScrollView.frame = NSRect(x: inset, y: y, width: contentWidth, height: max(120, bounds.height - y - inset))
     }
@@ -195,7 +235,7 @@ private final class OfflineRendererView: NSView {
         addSubview(chooseOutput)
 
         detectorControl.selectedSegment = 1
-        detectorControl.toolTip = "Realtime uses MediaPipe iris landmarks. Offline adds dark-blob refinement and inpaint fill."
+        detectorControl.toolTip = "Automatic evaluates learned eye warping and falls back to local geometry when needed."
         addSubview(detectorControl)
 
         for mode in OfflineRenderMode.allCases {
@@ -204,8 +244,14 @@ private final class OfflineRendererView: NSView {
         renderModePopup.selectItem(at: 0)
         addSubview(renderModePopup)
 
-        strengthField.stringValue = "1.4"
-        maxWidthField.stringValue = "480"
+        strengthField.stringValue = "1.0"
+        maxWidthField.stringValue = "0"
+        maxWidthField.toolTip = "0 keeps the original resolution"
+        calibrationField.placeholderString = "Optional calibration JSON; empty uses automatic mode"
+        addSubview(calibrationField)
+        chooseCalibrationButton.target = self
+        chooseCalibrationButton.action = #selector(chooseCalibration)
+        addSubview(chooseCalibrationButton)
         addSubview(strengthField)
         addSubview(maxWidthField)
 
@@ -294,8 +340,9 @@ private final class OfflineRendererView: NSView {
             outputURL: URL(fileURLWithPath: outputField.stringValue),
             detectorMode: detectorMode,
             renderMode: renderMode,
-            strength: Double(strengthField.stringValue) ?? 1.4,
-            maxWidth: Int(maxWidthField.stringValue) ?? 480
+            strength: min(1, max(0, Double(strengthField.stringValue) ?? 1)),
+            maxWidth: max(0, Int(maxWidthField.stringValue) ?? 0),
+            calibrationPath: calibrationField.stringValue
         )
 
         logView.string = ""
@@ -310,11 +357,13 @@ private final class OfflineRendererView: NSView {
                 DispatchQueue.main.async {
                     self?.appendLog("Done\n")
                     self?.isRunning = false
+                    self?.finishArgumentRun(error: nil)
                 }
             } catch {
                 DispatchQueue.main.async {
                     self?.appendLog("Error: \(error.localizedDescription)\n")
                     self?.isRunning = false
+                    self?.finishArgumentRun(error: error.localizedDescription)
                 }
             }
         }
@@ -325,68 +374,39 @@ private final class OfflineRendererView: NSView {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
+    @objc private func chooseCalibration() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url { calibrationField.stringValue = url.path }
+    }
+
     private func performRender(settings: RenderSettings) throws {
         guard FileManager.default.fileExists(atPath: settings.inputURL.path) else {
             throw OfflineRendererError.missingInput(settings.inputURL.path)
         }
-
-        let helperURL = try imageToolURL()
-        let landmarksScriptURL = try mediapipeScriptURL()
-        let outputParent = settings.outputURL.deletingLastPathComponent()
-        let workURL = outputParent
-            .appendingPathComponent(settings.outputURL.deletingPathExtension().lastPathComponent + "-work", isDirectory: true)
-        let framesURL = workURL.appendingPathComponent("frames", isDirectory: true)
-        let landmarksURL = workURL.appendingPathComponent("landmarks", isDirectory: true)
-        let correctedURL = workURL.appendingPathComponent("corrected", isDirectory: true)
-
-        try FileManager.default.createDirectory(at: outputParent, withIntermediateDirectories: true)
-        if FileManager.default.fileExists(atPath: workURL.path) {
-            try FileManager.default.removeItem(at: workURL)
+        let bundled = Bundle.main.resourceURL?.appendingPathComponent("scripts/render-gaze-video.py")
+        let script = bundled.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+            ?? repoRootURL.appendingPathComponent("scripts/render-gaze-video.py")
+        let bundledModels = Bundle.main.resourceURL?.appendingPathComponent("models")
+        let models = bundledModels.flatMap { FileManager.default.fileExists(atPath: $0.appendingPathComponent("face_landmarker.task").path) ? $0 : nil }
+            ?? repoRootURL.appendingPathComponent("Assets/models")
+        let localPython = repoRootURL.appendingPathComponent(".venv/bin/python3").path
+        let python = ProcessInfo.processInfo.environment["GAZE_EFFECT_PYTHON"] ?? (FileManager.default.isExecutableFile(atPath: localPython) ? localPython : "/opt/homebrew/bin/python3")
+        var arguments = ["-B", script.path, "--input", settings.inputURL.path, "--output", settings.outputURL.path,
+                         "--models", models.path, "--engine", settings.detectorMode == .realtime ? "geometry" : "hybrid",
+                         "--strength", String(settings.strength), "--max-width", String(settings.maxWidth),
+                         "--render-mode", settings.renderMode.rawValue, "--comparison", "--debug-video"]
+        if !settings.calibrationPath.isEmpty {
+            arguments += ["--calibration", settings.calibrationPath]
+            if let data = FileManager.default.contents(atPath: settings.calibrationPath),
+               let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let signature = json["signature"] as? [String: Any], let context = signature["context"] as? String {
+                arguments += ["--context", context]
+            }
         }
-        try FileManager.default.createDirectory(at: framesURL, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: landmarksURL, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: correctedURL, withIntermediateDirectories: true)
-
-        appendLog("Work: \(workURL.path)\n")
-        try run("/usr/bin/env", arguments: [
-            "ffmpeg", "-y",
-            "-i", settings.inputURL.path,
-            "-vf", "fps=12,scale=\(settings.maxWidth):-2",
-            framesURL.appendingPathComponent("frame-%05d.jpg").path
-        ], currentDirectory: repoRootURL)
-
-        try run("/usr/bin/env", arguments: [
-            "python3", landmarksScriptURL.path,
-            "--input-dir", framesURL.path,
-            "--output-dir", landmarksURL.path,
-            "--mode", settings.detectorMode.rawValue
-        ], currentDirectory: repoRootURL)
-
-        try run(helperURL.path, arguments: [
-            "--input-dir", framesURL.path,
-            "--output-dir", correctedURL.path,
-            "--landmarks-dir", landmarksURL.path,
-            "--max-width", String(settings.maxWidth),
-            "--strength", String(format: "%.3f", settings.strength),
-            "--fill-mode", settings.detectorMode.fillMode,
-            "--render-mode", settings.renderMode.rawValue,
-            "--verbose"
-        ], currentDirectory: repoRootURL)
-
-        try run("/usr/bin/env", arguments: [
-            "ffmpeg", "-y",
-            "-framerate", "36",
-            "-i", correctedURL.appendingPathComponent("frame-%05d.jpg").path,
-            "-an",
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-profile:v", "main",
-            "-level", "3.1",
-            "-crf", "30",
-            "-preset", "veryfast",
-            "-movflags", "+faststart",
-            settings.outputURL.path
-        ], currentDirectory: repoRootURL)
+        appendLog("Processing all frames at original timestamps with audio. Width 0 preserves source size.\n")
+        try run(python, arguments: arguments, currentDirectory: repoRootURL)
     }
 
     private func run(_ executable: String, arguments: [String], currentDirectory: URL) throws {
@@ -395,6 +415,10 @@ private final class OfflineRendererView: NSView {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        environment["PYTHONUNBUFFERED"] = "1"
+        process.environment = environment
         process.arguments = arguments
         process.currentDirectoryURL = currentDirectory
 
@@ -429,39 +453,10 @@ private final class OfflineRendererView: NSView {
         }
     }
 
-    private func imageToolURL() throws -> URL {
-        let bundled = Bundle.main.executableURL?
-            .deletingLastPathComponent()
-            .appendingPathComponent("GazeEffectImageTool")
-        if let bundled, FileManager.default.isExecutableFile(atPath: bundled.path) {
-            return bundled
-        }
-
-        let localBuild = repoRootURL.appendingPathComponent(".build/release/GazeEffectImageTool")
-        if FileManager.default.isExecutableFile(atPath: localBuild.path) {
-            return localBuild
-        }
-
-        throw OfflineRendererError.missingHelper(bundled?.path ?? localBuild.path)
-    }
-
-    private func mediapipeScriptURL() throws -> URL {
-        if let resourceURL = Bundle.main.resourceURL {
-            let bundled = resourceURL.appendingPathComponent("scripts/mediapipe-eye-landmarks.py")
-            if FileManager.default.fileExists(atPath: bundled.path) {
-                return bundled
-            }
-        }
-
-        let repoScript = repoRootURL.appendingPathComponent("scripts/mediapipe-eye-landmarks.py")
-        if FileManager.default.fileExists(atPath: repoScript.path) {
-            return repoScript
-        }
-
-        throw OfflineRendererError.missingHelper(repoScript.path)
-    }
-
     private static func defaultRepoRootURL() -> URL {
+        if let path = ProcessInfo.processInfo.environment["GAZE_EFFECT_ROOT"] {
+            return URL(fileURLWithPath: path)
+        }
         let bundleURL = Bundle.main.bundleURL
         if bundleURL.pathExtension == "app" {
             return bundleURL

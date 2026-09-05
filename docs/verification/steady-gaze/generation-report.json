@@ -1,0 +1,193 @@
+{
+  "source": "Assets/test-video-2.mp4",
+  "sourceSHA256": "af863d0e5ebcef564a848339451b3d25a52adfb8c2052b3520cb677e378319b7",
+  "outputs": {
+    "effect": "Assets/examples/video/steady-gaze/gaze-effect-steady-final.mp4",
+    "comparison": "Assets/examples/video/steady-gaze/gaze-effect-steady-final-comparison.mp4",
+    "debug": "Assets/examples/video/steady-gaze/gaze-effect-steady-final-debug.mp4"
+  },
+  "frames": 361,
+  "duration": 15.041667,
+  "sourceMetadata": {
+    "streams": [
+      {
+        "index": 0,
+        "codec_name": "h264",
+        "codec_long_name": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+        "profile": "High",
+        "codec_type": "video",
+        "codec_tag_string": "avc1",
+        "codec_tag": "0x31637661",
+        "mime_codec_string": "avc1.64001f",
+        "width": 1280,
+        "height": 720,
+        "coded_width": 1280,
+        "coded_height": 720,
+        "has_b_frames": 2,
+        "pix_fmt": "yuv420p",
+        "level": 31,
+        "chroma_location": "left",
+        "field_order": "progressive",
+        "is_avc": "true",
+        "nal_length_size": "4",
+        "id": "0x1",
+        "r_frame_rate": "24/1",
+        "avg_frame_rate": "24/1",
+        "time_base": "1/12288",
+        "start_pts": 0,
+        "start_time": "0.000000",
+        "duration_ts": 184832,
+        "duration": "15.041667",
+        "bit_rate": "1471988",
+        "bits_per_raw_sample": "8",
+        "nb_frames": "361",
+        "extradata_size": 45,
+        "disposition": {
+          "default": 1,
+          "dub": 0,
+          "original": 0,
+          "comment": 0,
+          "lyrics": 0,
+          "karaoke": 0,
+          "forced": 0,
+          "hearing_impaired": 0,
+          "visual_impaired": 0,
+          "clean_effects": 0,
+          "attached_pic": 0,
+          "timed_thumbnails": 0,
+          "non_diegetic": 0,
+          "captions": 0,
+          "descriptions": 0,
+          "metadata": 0,
+          "dependent": 0,
+          "still_image": 0,
+          "multilayer": 0
+        },
+        "tags": {
+          "language": "und",
+          "handler_name": "VideoHandler"
+        }
+      },
+      {
+        "index": 1,
+        "codec_name": "aac",
+        "codec_long_name": "AAC (Advanced Audio Coding)",
+        "profile": "LC",
+        "codec_type": "audio",
+        "codec_tag_string": "mp4a",
+        "codec_tag": "0x6134706d",
+        "mime_codec_string": "mp4a.40.2",
+        "sample_fmt": "fltp",
+        "sample_rate": "44100",
+        "channels": 2,
+        "channel_layout": "stereo",
+        "bits_per_sample": 0,
+        "initial_padding": 0,
+        "id": "0x2",
+        "r_frame_rate": "0/0",
+        "avg_frame_rate": "0/0",
+        "time_base": "1/44100",
+        "start_pts": 0,
+        "start_time": "0.000000",
+        "duration_ts": 664543,
+        "duration": "15.069002",
+        "bit_rate": "130957",
+        "nb_frames": "650",
+        "extradata_size": 5,
+        "disposition": {
+          "default": 1,
+          "dub": 0,
+          "original": 0,
+          "comment": 0,
+          "lyrics": 0,
+          "karaoke": 0,
+          "forced": 0,
+          "hearing_impaired": 0,
+          "visual_impaired": 0,
+          "clean_effects": 0,
+          "attached_pic": 0,
+          "timed_thumbnails": 0,
+          "non_diegetic": 0,
+          "captions": 0,
+          "descriptions": 0,
+          "metadata": 0,
+          "dependent": 0,
+          "still_image": 0,
+          "multilayer": 0
+        },
+        "tags": {
+          "language": "und",
+          "handler_name": "SoundHandler"
+        }
+      }
+    ],
+    "format": {
+      "filename": "Assets/test-video-2.mp4",
+      "nb_streams": 2,
+      "nb_programs": 0,
+      "nb_stream_groups": 0,
+      "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+      "format_long_name": "QuickTime / MOV",
+      "start_time": "0.000000",
+      "duration": "15.069002",
+      "size": "3049015",
+      "bit_rate": "1618695",
+      "probe_score": 100,
+      "tags": {
+        "major_brand": "isom",
+        "minor_version": "512",
+        "compatible_brands": "isomiso2avc1mp41",
+        "encoder": "Lavf58.76.100"
+      }
+    }
+  },
+  "engine": "hybrid",
+  "detector": "image",
+  "calibration": null,
+  "renderedFrames": 361,
+  "reasons": {
+    "ok": 722
+  },
+  "engines": {
+    "geometry": 691,
+    "neural": 31
+  },
+  "changedOutsideAperture": 0,
+  "changedPixels": 504858,
+  "processingMedianMS": 10.75404199946206,
+  "processingP95MS": 32.65587500027323,
+  "elapsedSeconds": 38.27779362500041,
+  "frameCountAndTimestampsVerified": true,
+  "fullDecodeVerified": true,
+  "pipelineSHA256": "8be70015d62988d1f21ca506b84a8461200db4f4aacba6654b10de58d1a9fab3",
+  "modelManifest": {
+    "upstream": "https://github.com/chihfanhsu/gaze_correction",
+    "conversion_repository": "https://github.com/KypMon/coreml-eye-contact",
+    "revision": "e9d5ae505c62f87851756e966d3e8d1d39b1bcfe",
+    "files": {
+      "gaze_L.onnx": {
+        "url": "https://raw.githubusercontent.com/KypMon/coreml-eye-contact/e9d5ae505c62f87851756e966d3e8d1d39b1bcfe/neural/gaze_L.onnx",
+        "sha256": "f39ee44e76c4efbd0bace9295baab7a8c823ac18a4ff7f5b725ddbfbf2bd50e1",
+        "bytes": 1061688
+      },
+      "gaze_R.onnx": {
+        "url": "https://raw.githubusercontent.com/KypMon/coreml-eye-contact/e9d5ae505c62f87851756e966d3e8d1d39b1bcfe/neural/gaze_R.onnx",
+        "sha256": "f64f721e805c8bcbf2d0b96b889fe957f480e5e328014a9ee6e93d68f0aa2d47",
+        "bytes": 1061732
+      },
+      "face_landmarker.task": {
+        "url": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+        "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+        "bytes": 3758596
+      }
+    }
+  },
+  "frameDirectory": "build/steady-gaze/gaze-effect-steady-final-frames-qc3glb5t",
+  "limitations": [
+    "No ground-truth gaze angles in source clip",
+    "Quality scores are not probabilities",
+    "Head/eye geometry uses an approximate anatomical model",
+    "This clip does not validate all identities or eyewear"
+  ],
+  "records": "build/steady-gaze/gaze-effect-steady-final.frames.jsonl"
+}

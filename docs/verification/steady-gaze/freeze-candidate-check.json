@@ -1,0 +1,14 @@
+{
+  "intervalSeconds": [
+    5.541666666666667,
+    6.333333333333333
+  ],
+  "frameIDs": [
+    133,
+    152
+  ],
+  "frameCount": 20,
+  "uniqueRawOutputFrames": 20,
+  "changedPixelsOutsideSourceEyeMasks": 0,
+  "interpretation": "Low-motion warning retained; no repeated output frame and source pixels outside eyes are unchanged"
+}
